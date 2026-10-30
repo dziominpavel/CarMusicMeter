@@ -67,7 +67,7 @@ echo No adb required. Test scenario: docs\HEADUNIT_TEST.md
 
 if "%INSTALL%"=="1" (
     echo.
-    echo === Installing via adb (phone) ===
+    echo === Installing via adb ^(phone^) ===
     where adb >nul 2>&1
     if errorlevel 1 (
         echo [ERROR] adb not found in PATH.
