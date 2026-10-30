@@ -1,7 +1,7 @@
 schema: spec-driven
 
 context: |
-  TuneMileage — Android-приложение (Kotlin, Compose) для сбора статистики
+  CarMusicMeter — Android-приложение (Kotlin, Compose) для сбора статистики
   прослушиваний в автомобиле. Работает поверх штатного плеера магнитолы
   Teyes CC3 (Android 10): читает MediaSession и медиа-уведомления, опрашивает
   громкость, пишет события в JSONL. adb на магнитоле нет: APK ставится

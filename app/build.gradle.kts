@@ -21,13 +21,13 @@ if (releaseStoreProp != null && !hasReleaseKeystore) {
 }
 
 android {
-    namespace = "com.example.tunemileage"
+    namespace = "com.example.carmusicmeter"
     compileSdk {
         version = release(36)
     }
 
     defaultConfig {
-        applicationId = "com.example.tunemileage"
+        applicationId = "com.example.carmusicmeter"
         // 29 = Android 10: штатная магнитола Teyes CC3. Телефон для отладки тоже подходит.
         minSdk = 29
         targetSdk = 36
@@ -55,7 +55,7 @@ android {
                 isIgnoreExitValue = true
             }.standardOutput.asText.map { it.trim().toInt() }.get()
         }.getOrElse {
-            logger.warn("[TuneMileage] git rev-list --count HEAD не выполнен (${it.message}) — versionCode = база")
+            logger.warn("[CarMusicMeter] git rev-list --count HEAD не выполнен (${it.message}) — versionCode = база")
             0
         }
         versionCode = 2_000_100_000 + commitCount
@@ -67,7 +67,7 @@ android {
         val buildDate = LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))
         buildConfigField("String", "BUILD_DATE", "\"$buildDate\"")
 
-        logger.lifecycle("[TuneMileage] versionName=$versionName, versionCode=$versionCode, buildDate=$buildDate")
+        logger.lifecycle("[CarMusicMeter] versionName=$versionName, versionCode=$versionCode, buildDate=$buildDate")
     }
 
     if (hasReleaseKeystore) {

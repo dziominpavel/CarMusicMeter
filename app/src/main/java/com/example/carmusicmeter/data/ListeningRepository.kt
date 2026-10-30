@@ -1,0 +1,81 @@
+package com.example.carmusicmeter.data
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+
+/** Состояние, которое видит экран диагностики. */
+data class LiveState(
+    val serviceRunning: Boolean = false,
+    val notificationAccess: Boolean = false,
+    val batteryUnrestricted: Boolean = false,
+    val live: LiveTrack? = null,
+    val volume: Int = 0,
+    val volumeMax: Int = 0,
+    val error: String? = null,
+    val lastEventAt: Long? = null,
+    val eventsToday: Int = 0,
+    val tracksToday: Int = 0,
+    val sessionsSeen: Int = 0,
+    val recent: List<LogEvent> = emptyList(),
+)
+
+/**
+ * Единственная точка обмена состоянием между службой и UI.
+ * Живёт в процессе; после перезапуска счётчики восстанавливаются из файла.
+ */
+object ListeningRepository {
+
+    private val _state = MutableStateFlow(LiveState())
+    val state: StateFlow<LiveState> = _state.asStateFlow()
+
+    fun attach(log: EventLog) {
+        val (events, tracks) = log.todayCounts()
+        _state.update { it.copy(eventsToday = events, tracksToday = tracks) }
+    }
+
+    fun setServiceRunning(running: Boolean) {
+        _state.update { it.copy(serviceRunning = running) }
+    }
+
+    fun setNotificationAccess(granted: Boolean) {
+        _state.update { it.copy(notificationAccess = granted) }
+    }
+
+    fun setBatteryUnrestricted(unrestricted: Boolean) {
+        _state.update { it.copy(batteryUnrestricted = unrestricted) }
+    }
+
+    fun updateLive(
+        live: LiveTrack?,
+        volume: Int,
+        volumeMax: Int,
+        notificationAccess: Boolean,
+        error: String?,
+    ) {
+        _state.update { previous ->
+            val newSession = live != null && live.packageName != previous.live?.packageName
+            previous.copy(
+                live = live,
+                volume = volume,
+                volumeMax = volumeMax,
+                notificationAccess = notificationAccess,
+                error = error,
+                sessionsSeen = if (newSession) previous.sessionsSeen + 1 else previous.sessionsSeen,
+            )
+        }
+    }
+
+    fun record(events: List<LogEvent>) {
+        if (events.isEmpty()) return
+        _state.update { previous ->
+            previous.copy(
+                eventsToday = previous.eventsToday + events.size,
+                tracksToday = previous.tracksToday + events.count { it.type == "track_started" },
+                lastEventAt = events.last().ts,
+                recent = (events.reversed() + previous.recent).take(50),
+            )
+        }
+    }
+}

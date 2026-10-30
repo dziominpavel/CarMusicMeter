@@ -1,4 +1,4 @@
-name: TuneMileage
+name: CarMusicMeter
 description: "Статистика прослушиваний в автомобиле: что играло, что пропускалось и как менялась громкость. Работает поверх штатного плеера магнитолы."
 icon: assets/icon.png
 requirements: "Android 10+"

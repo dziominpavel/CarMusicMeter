@@ -22,5 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TuneMileage"
+rootProject.name = "CarMusicMeter"
 include(":app")

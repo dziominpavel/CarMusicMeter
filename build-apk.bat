@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 rem Build the APK for the head unit. adb is NOT needed on the head unit:
-rem copy dist\TuneMileage-*-latest.apk to a USB stick and install it there.
+rem copy dist\CarMusicMeter-*-latest.apk to a USB stick and install it there.
 rem
 rem Usage: build-apk.bat [debug|release] [install]
 rem   (no args)  release build, signed with the keystore from local.properties
@@ -29,7 +29,7 @@ if "%MODE%"=="debug" (
     set "SRC=app\build\outputs\apk\debug\app-debug.apk"
 )
 
-echo === TuneMileage: %MODE% (%TASK%) ===
+echo === CarMusicMeter: %MODE% (%TASK%) ===
 call gradlew.bat %TASK% --console=plain
 if errorlevel 1 (
     echo.
@@ -51,13 +51,13 @@ if not defined VER set "VER=0.0.0"
 if not exist "dist" mkdir "dist"
 if not exist "dist\archive" mkdir "dist\archive"
 
-set "LATEST=dist\TuneMileage-%MODE%-latest.apk"
-set "ARCHIVED=dist\archive\TuneMileage-%VER%-%MODE%.apk"
+set "LATEST=dist\CarMusicMeter-%MODE%-latest.apk"
+set "ARCHIVED=dist\archive\CarMusicMeter-%VER%-%MODE%.apk"
 copy /y "%SRC%" "%LATEST%" >nul
 copy /y "%SRC%" "%ARCHIVED%" >nul
 
 echo.
-echo [OK] TuneMileage %VER% (%MODE%)
+echo [OK] CarMusicMeter %VER% (%MODE%)
 echo   TAKE THIS: %LATEST%
 echo   history:   %ARCHIVED%
 for %%F in ("%LATEST%") do echo   size:      %%~zF bytes

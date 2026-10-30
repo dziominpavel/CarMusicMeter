@@ -1,4 +1,4 @@
-# TuneMileage
+# CarMusicMeter
 
 Тихий сборщик статистики прослушиваний для автомобильной магнитолы **Teyes CC3**
 (Android 10) и телефона. Не заменяет штатный плеер: читает активные медиасессии,
@@ -24,7 +24,7 @@ Teyes, и собрать первые реальные данные. Анали�
 build-apk.bat
 ```
 
-Готовый APK появится в `dist\TuneMileage-release-latest.apk` (и копия в `dist\archive\`).
+Готовый APK появится в `dist\CarMusicMeter-release-latest.apk` (и копия в `dist\archive\`).
 Для отладочной сборки с читаемыми стектрейсами: `build-apk.bat debug`.
 
 Установка на магнитолу и проверка в машине — `docs/HEADUNIT_TEST.md`.
@@ -53,7 +53,7 @@ MediaWatchService (foreground, опрос 0.5–1 с)
 
 ## Структура
 
-- `app/src/main/java/com/example/tunemileage/` — код
+- `app/src/main/java/com/example/carmusicmeter/` — код
   - `service/` — foreground-служба и NotificationListener
   - `data/` — трекер, журнал, состояние
   - `probe/` — чтение MediaSession и дамп

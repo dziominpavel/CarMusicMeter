@@ -1,4 +1,4 @@
-# TuneMileage — правила для AI-агента
+# CarMusicMeter — правила для AI-агента
 
 Единый IDE-нейтральный источник always-on правил. Дополнительные правила — в `.cursor/rules/*.mdc`.
 OpenSpec-скиллы: `.cursor/skills/`, `.devin/skills/`, `.opencode/skills/`; команды: `.cursor/commands/opsx-*.md`, `.devin/workflows/opsx-*.md`, `.opencode/commands/opsx-*.md`.

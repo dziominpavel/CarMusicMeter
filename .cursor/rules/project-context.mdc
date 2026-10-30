@@ -1,9 +1,9 @@
 ---
-description: Контекст проекта TuneMileage
+description: Контекст проекта CarMusicMeter
 alwaysApply: true
 ---
 
-# TuneMileage
+# CarMusicMeter
 
 Тихий сборщик статистики прослушиваний для штатного плеера Teyes CC3 (Android 10)
 и телефона. Приложение только наблюдает: MediaSession, медиа-уведомления и
