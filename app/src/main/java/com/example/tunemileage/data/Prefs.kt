@@ -1,6 +1,7 @@
 package com.example.tunemileage.data
 
 import android.content.Context
+import androidx.core.content.edit
 
 class Prefs(context: Context) {
 
@@ -10,7 +11,7 @@ class Prefs(context: Context) {
     var autoStart: Boolean
         get() = prefs.getBoolean(KEY_AUTO_START, true)
         set(value) {
-            prefs.edit().putBoolean(KEY_AUTO_START, value).apply()
+            prefs.edit { putBoolean(KEY_AUTO_START, value) }
         }
 
     private companion object {

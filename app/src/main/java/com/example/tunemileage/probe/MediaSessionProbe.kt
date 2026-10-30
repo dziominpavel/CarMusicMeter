@@ -6,6 +6,7 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
+import android.os.Build
 import androidx.core.app.NotificationManagerCompat
 import com.example.tunemileage.data.MediaPhase
 import com.example.tunemileage.data.MediaSnapshot
@@ -83,7 +84,7 @@ class MediaSessionProbe(private val context: Context) {
 
         return MediaSnapshot(
             packageName = packageName,
-            sessionTag = tag,
+            sessionTag = tagOrNull(),
             title = title?.takeIf { it.isNotBlank() },
             artist = artist?.takeIf { it.isNotBlank() },
             album = metadata.string(MediaMetadata.METADATA_KEY_ALBUM),
@@ -125,7 +126,7 @@ class MediaSessionProbe(private val context: Context) {
         }
         return JSONObject().apply {
             put("package", controller.packageName)
-            put("tag", controller.tag)
+            put("tag", controller.tagOrNull())
             put("metadata", metadataJson)
             put("playback", JSONObject().apply {
                 put("state", PlaybackNames.state(playback?.state))
@@ -144,6 +145,10 @@ class MediaSessionProbe(private val context: Context) {
         key in LONG_KEYS -> runCatching { metadata.getLong(key) }.getOrDefault(0L)
         else -> runCatching { metadata.getString(key) }.getOrNull() ?: "present"
     }
+
+    // getTag() появился только в Android 11; на магнитоле Android 10 тега нет.
+    private fun MediaController.tagOrNull(): String? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) tag else null
 
     private fun MediaMetadata?.string(key: String): String? =
         this?.let { runCatching { it.getString(key) }.getOrNull() }

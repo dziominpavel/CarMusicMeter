@@ -1,9 +1,11 @@
 package com.example.tunemileage.service
 
+import android.Manifest
 import android.app.Notification
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -11,6 +13,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import com.example.tunemileage.MainActivity
 import com.example.tunemileage.R
 import com.example.tunemileage.TuneMileageApp
@@ -155,6 +158,14 @@ class MediaWatchService : Service() {
     }
 
     private fun updateNotification(live: LiveTrack?, volume: Int, volumeMax: Int) {
+        // На Android 13+ без разрешения уведомление просто не показывается;
+        // служба при этом продолжает работать.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         val signature = notificationSignature(live, volume, volumeMax)
         if (signature == lastNotificationSignature) return
         lastNotificationSignature = signature
