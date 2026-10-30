@@ -1,0 +1,65 @@
+# Gradle
+.gradle/
+**/.gradle/
+build/
+**/build/
+
+# Kotlin compiler
+.kotlin/
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+.idea/**
+
+# Local SDK path (machine-specific)
+local.properties
+
+# IDE — VS Code / Cursor / Windsurf
+#   Rules и workflows коммитятся intentionally; всё остальное (plans, cache, sessions) — local state.
+.vscode/
+*.code-workspace
+
+## Cursor
+#.cursor/plans/
+#
+## Windsurf
+#.windsurf/*
+#!.windsurf/rules/
+#!.windsurf/workflows/
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Android build & native
+/captures
+.externalNativeBuild
+.cxx
+
+# Build outputs
+*.apk
+*.aab
+*.aar
+*.ap_*
+*.hprof
+*.log
+
+# Audio temp (dev)
+*.wav
+*.tmp
+
+# Logcat dumps for local debugging
+/logs/
+
+# Signing / credentials
+*.jks
+*.keystore
+
+# Gradle configuration cache reports (optional noise)
+build/reports/
+**/build/reports/
+
+/audioAudit/

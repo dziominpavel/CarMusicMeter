@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TuneMileage</string>
+    <string name="channel_watch_name">Сбор статистики</string>
+    <string name="channel_watch_description">Тихая служба: что играет и как меняется громкость</string>
+    <string name="notif_title">TuneMileage</string>
+    <string name="notif_text_idle">Ожидание музыки</string>
+    <string name="notif_text_playing">%1$s • громкость %2$d/%3$d</string>
+</resources>

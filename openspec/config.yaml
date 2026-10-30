@@ -1,0 +1,24 @@
+schema: spec-driven
+
+context: |
+  TuneMileage — Android-приложение (Kotlin, Compose) для сбора статистики
+  прослушиваний в автомобиле. Работает поверх штатного плеера магнитолы
+  Teyes CC3 (Android 10): читает MediaSession и медиа-уведомления, опрашивает
+  громкость, пишет события в JSONL. adb на магнитоле нет: APK ставится
+  с флешки, логи выгружаются ZIP через SAF. Анализ коллекции — на ПК.
+
+rules:
+  specs:
+    - "Заголовки requirements и сценариев — на русском"
+    - "В тексте ### Requirement использовать MUST, SHALL или MUST NOT (не «ДОЛЖЕН») — иначе validate ругается"
+    - "Main spec (openspec/specs/): секции ## Purpose и ## Requirements"
+    - "Delta spec (openspec/changes/*/specs/): ## ADDED/MODIFIED/REMOVED Requirements"
+    - "Каждый requirement — минимум один #### Scenario: с WHEN/THEN"
+    - "Capability = возможность (playback-capture, volume-tracking), не экран"
+    - "Перед завершением изменения запускать openspec validate --all"
+  proposal:
+    - "Пиши кратко, ответь: что меняем?"
+  design:
+    - "Пиши кратко: ключевые решения, trade-offs"
+  tasks:
+    - "Пиши кратко, чекбоксы - [ ] / - [x]"
