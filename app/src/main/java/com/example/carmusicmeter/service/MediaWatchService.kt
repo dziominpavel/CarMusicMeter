@@ -196,7 +196,7 @@ class MediaWatchService : Service() {
             getString(R.string.notif_text_idle)
         }
         return NotificationCompat.Builder(this, CarMusicMeterApp.CHANNEL_WATCH)
-            .setSmallIcon(R.drawable.ic_stat_watch)
+            .setSmallIcon(R.drawable.ic_stat_cmm)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(contentIntent)
