@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
+import com.example.carmusicmeter.data.ExportInfo
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.Prefs
 import com.example.carmusicmeter.diagnostics.SnapshotWriter
@@ -101,7 +102,8 @@ class MainActivity : ComponentActivity() {
                     onSnapshot = { takeSnapshot() },
                     onExport = {
                         val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-                        exportLauncher.launch("CarMusicMeter-logs-$stamp.zip")
+                        val device = prefs.deviceId.take(8)
+                        exportLauncher.launch("CarMusicMeter-$device-logs-$stamp.zip")
                     },
                 )
             }
@@ -168,8 +170,16 @@ class MainActivity : ComponentActivity() {
                     app.eventLog.exportTo(
                         resolver = contentResolver,
                         uri = uri,
-                        appVersion = AppVersion.name(this@MainActivity),
-                        versionCode = BuildConfig.VERSION_CODE,
+                        info = ExportInfo(
+                            deviceId = app.prefs.deviceId,
+                            exportSeq = app.prefs.nextExportSeq(),
+                            appVersion = AppVersion.name(this@MainActivity),
+                            versionCode = BuildConfig.VERSION_CODE,
+                            manufacturer = Build.MANUFACTURER,
+                            model = Build.MODEL,
+                            androidRelease = Build.VERSION.RELEASE,
+                            sdkInt = Build.VERSION.SDK_INT,
+                        ),
                     )
                 }
             }

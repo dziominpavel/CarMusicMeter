@@ -6,6 +6,8 @@ import org.json.JSONObject
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.security.DigestInputStream
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -66,34 +68,46 @@ class EventLog(baseDir: File) {
         return file
     }
 
-    /** Упаковать журнал и снимки в ZIP, выбранный пользователем через SAF. */
+    /**
+     * Упаковать журнал и снимки в ZIP, выбранный пользователем через SAF.
+     *
+     * Контрольные суммы считаются по ходу копирования, без второго прохода
+     * по файлам: на магнитоле дорога каждая секунда чтения флешки.
+     */
     fun exportTo(
         resolver: ContentResolver,
         uri: Uri,
-        appVersion: String,
-        versionCode: Int,
+        info: ExportInfo,
     ): Int {
         val files = buildList {
             logsDir.listFiles()?.sortedBy { it.name }?.let { addAll(it) }
             snapshotsDir.listFiles()?.sortedBy { it.name }?.let { addAll(it) }
         }
+        val entries = ArrayList<ExportFile>(files.size)
         val stream = resolver.openOutputStream(uri)
             ?: error("не удалось открыть поток для записи")
         stream.use { output ->
             ZipOutputStream(BufferedOutputStream(output)).use { zip ->
                 files.forEach { file ->
                     val dir = if (file.parentFile == logsDir) "logs" else "snapshots"
-                    zip.putNextEntry(ZipEntry("$dir/${file.name}"))
-                    file.inputStream().use { it.copyTo(zip) }
+                    val path = "$dir/${file.name}"
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var size = 0L
+                    zip.putNextEntry(ZipEntry(path))
+                    DigestInputStream(file.inputStream().buffered(), digest).use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            zip.write(buffer, 0, read)
+                            size += read
+                        }
+                    }
                     zip.closeEntry()
+                    entries += ExportFile(path, size, digest.digest().toHex())
                 }
                 val manifest = Json.objectFrom(
-                    mapOf(
-                        "exportedAt" to System.currentTimeMillis(),
-                        "appVersion" to appVersion,
-                        "versionCode" to versionCode,
-                        "files" to files.size,
-                    ),
+                    ExportManifest.build(info, entries, System.currentTimeMillis()),
                 )
                 zip.putNextEntry(ZipEntry("manifest.json"))
                 zip.write(manifest.toString(2).toByteArray(Charsets.UTF_8))
@@ -120,4 +134,6 @@ class EventLog(baseDir: File) {
 
     private fun fileStamp(ts: Long): String =
         SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(ts))
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 }
