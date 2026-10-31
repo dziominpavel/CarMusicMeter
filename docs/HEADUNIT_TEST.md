@@ -79,7 +79,8 @@ build-apk.bat
 
 - `logs/events-YYYY-MM-DD.jsonl` — события;
 - `snapshots/snapshot-*.json` — снимки, включая автоматический на каждый старт трека;
-- `manifest.json` — версия и дата экспорта.
+- `manifest.json` — `schemaVersion`, `deviceId`, `exportSeq`, время экспорта,
+  версия приложения, модель устройства и список файлов с размером и SHA-256.
 
 Первый снимок при старте трека — самый ценный: там все ключи метаданных и actions.
 
