@@ -30,6 +30,17 @@ build-apk.bat
 Установка на магнитолу и проверка в машине — `docs/HEADUNIT_TEST.md`.
 Для проверки на телефоне: `build-apk.bat debug install` (нужен adb).
 
+## Анализ выгрузки
+
+```bat
+py scripts/report.py CarMusicMeter-<id>-logs-<дата>.zip
+py scripts/report.py export-1.zip export-2.zip --csv report.csv --json-out report.json
+```
+
+Отчёт считает прогресс и прослушанное время, скипы, громкость, перемотки и
+кандидатов на удаление. Несколько ZIP можно передать сразу — журналы
+склеиваются без дублей. Формулы и ограничения — `docs/METRICS.md`.
+
 ## Как это работает
 
 ```
@@ -60,8 +71,9 @@ MediaWatchService (foreground, опрос 0.5–1 с)
   - `diagnostics/` — снимки и crash-лог
   - `ui/` — экран диагностики
 - `openspec/specs/` — требования к захвату, громкости и журналу
-- `docs/` — архитектура, проверка в машине, план, версионирование
+- `docs/` — архитектура, метрики, проверка в машине, план, версионирование
 - `scripts/check-version.py` — сверка версии и changelog
+- `scripts/report.py` — отчёт по ZIP-выгрузке на ПК
 
 ## Приватность
 

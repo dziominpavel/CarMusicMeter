@@ -63,3 +63,7 @@ build/reports/
 **/build/reports/
 
 /audioAudit/
+
+# Python (scripts)
+__pycache__/
+*.pyc
