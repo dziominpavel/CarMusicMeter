@@ -19,16 +19,20 @@ data class VolumeReading(
 /** Выбирает MCU, если он доступен, иначе AudioManager. Чистая логика для тестов. */
 object VolumeSelector {
 
+    /** Teyes CC3 показывает шкалу 0…43; на другой прошивке значение можно переопределить. */
+    const val DEFAULT_MCU_MAX = 43
+
     fun select(
         mcu: McuVolume?,
         audioValue: Int,
         audioMax: Int,
+        mcuMax: Int = DEFAULT_MCU_MAX,
     ): VolumeReading {
         if (mcu != null && mcu.volume != null) {
             val value = if (mcu.muted == true) 0 else mcu.volume
             return VolumeReading(
                 value = value,
-                max = null,
+                max = mcuMax.takeIf { it > 0 },
                 source = VolumeSource.MCU,
                 muted = mcu.muted == true,
             )

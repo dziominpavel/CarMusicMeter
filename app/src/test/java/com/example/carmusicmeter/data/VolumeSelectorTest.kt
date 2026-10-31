@@ -8,7 +8,7 @@ import org.junit.Test
 class VolumeSelectorTest {
 
     @Test
-    fun `MCU важнее AudioManager и не подставляет чужой максимум`() {
+    fun `MCU важнее AudioManager и использует максимум 43`() {
         val reading = VolumeSelector.select(
             mcu = McuVolume(volume = 4, muted = false, updatedAtMs = 1),
             audioValue = 25,
@@ -16,6 +16,20 @@ class VolumeSelectorTest {
         )
 
         assertEquals(4, reading.value)
+        assertEquals(43, reading.max)
+        assertEquals(VolumeSource.MCU, reading.source)
+    }
+
+    @Test
+    fun `нулевой максимум MCU означает неизвестный`() {
+        val reading = VolumeSelector.select(
+            mcu = McuVolume(volume = 30, muted = false, updatedAtMs = 1),
+            audioValue = 25,
+            audioMax = 25,
+            mcuMax = 0,
+        )
+
+        assertEquals(30, reading.value)
         assertNull(reading.max)
         assertEquals(VolumeSource.MCU, reading.source)
     }

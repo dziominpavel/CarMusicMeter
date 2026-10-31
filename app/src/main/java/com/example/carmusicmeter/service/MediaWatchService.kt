@@ -246,6 +246,7 @@ class MediaWatchService : Service() {
                 teyesError = teyesStatus.error,
                 mcuVolume = teyesStatus.volume,
                 mcuMuted = teyesStatus.muted,
+                mcuMax = if (reading.source == VolumeSource.MCU) app.prefs.mcuMaxVolume else null,
                 stockSource = stockState?.source,
                 accessibilityEnabled = accessibilityEnabled,
             )
@@ -258,7 +259,12 @@ class MediaWatchService : Service() {
     private fun readVolume(): VolumeReading {
         val audioValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         val audioMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        return VolumeSelector.select(teyes.reading(), audioValue, audioMax)
+        return VolumeSelector.select(
+            mcu = teyes.reading(),
+            audioValue = audioValue,
+            audioMax = audioMax,
+            mcuMax = app.prefs.mcuMaxVolume,
+        )
     }
 
     private fun teyesEventIfChanged(

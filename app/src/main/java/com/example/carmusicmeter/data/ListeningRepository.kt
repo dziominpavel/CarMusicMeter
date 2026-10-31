@@ -19,6 +19,7 @@ data class LiveState(
     val teyesError: String? = null,
     val mcuVolume: Int? = null,
     val mcuMuted: Boolean? = null,
+    val mcuMax: Int? = null,
     val stockSource: String? = null,
     val error: String? = null,
     val lastEventAt: Long? = null,
@@ -69,6 +70,7 @@ object ListeningRepository {
         teyesError: String? = null,
         mcuVolume: Int? = null,
         mcuMuted: Boolean? = null,
+        mcuMax: Int? = null,
         stockSource: String? = null,
         accessibilityEnabled: Boolean = false,
     ) {
@@ -83,6 +85,7 @@ object ListeningRepository {
                 teyesError = teyesError,
                 mcuVolume = mcuVolume,
                 mcuMuted = mcuMuted,
+                mcuMax = mcuMax,
                 stockSource = stockSource,
                 accessibilityEnabled = accessibilityEnabled,
                 notificationAccess = notificationAccess,

@@ -35,6 +35,13 @@ class Prefs(context: Context) {
             prefs.edit { putString(KEY_EXPORT_RANGE, value.tag) }
         }
 
+    /** Верхняя граница шкалы MCU Teyes CC3; 0 — не показывать максимум. */
+    var mcuMaxVolume: Int
+        get() = prefs.getInt(KEY_MCU_MAX_VOLUME, VolumeSelector.DEFAULT_MCU_MAX)
+        set(value) {
+            prefs.edit { putInt(KEY_MCU_MAX_VOLUME, value) }
+        }
+
     fun storagePolicy(): StoragePolicy = StoragePolicy(
         retentionDays = retentionDays,
         maxBytes = maxBytes,
@@ -65,5 +72,6 @@ class Prefs(context: Context) {
         const val KEY_RETENTION_DAYS = "retention_days"
         const val KEY_MAX_BYTES = "max_bytes"
         const val KEY_EXPORT_RANGE = "export_range"
+        const val KEY_MCU_MAX_VOLUME = "mcu_max_volume"
     }
 }

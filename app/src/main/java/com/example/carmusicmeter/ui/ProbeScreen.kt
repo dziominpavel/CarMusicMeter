@@ -387,7 +387,10 @@ private fun StockPlayerCard(
             }
             Text(
                 text = "Громкость: ${sourceLabel(state.volumeSource)}" +
-                    state.mcuVolume?.let { " · MCU $it" }.orEmpty(),
+                    state.mcuVolume?.let { value ->
+                        val max = state.mcuMax?.let { "/$it" }.orEmpty()
+                        " · MCU $value$max"
+                    }.orEmpty(),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

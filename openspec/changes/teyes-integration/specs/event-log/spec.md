@@ -21,9 +21,9 @@ toolkit и список установленных пакетов Teyes/FYT/ла
 #### Scenario: Громкость на Teyes
 
 - **WHEN** пользователь делает снимок при громкости 4 на панели
-- **THEN** снимок содержит `teyes.volume=4`, `teyes.source=mcu`, значения и
-  максимумы всех аудиопотоков и `isVolumeFixed`, даже если `STREAM_MUSIC`
-  показывает 25/25
+- **THEN** снимок содержит `teyes.volume=4`, `teyes.max=43`, `teyes.source=mcu`,
+  значения и максимумы всех аудиопотоков и `isVolumeFixed`, даже если
+  `STREAM_MUSIC` показывает 25/25
 
 #### Scenario: Штатный плеер без MediaSession
 
