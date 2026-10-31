@@ -2,35 +2,35 @@
 
 ## 1. Экспорт без SAF
 
-- [ ] 1.1 Обернуть запуск `ACTION_CREATE_DOCUMENT` в `runCatching`; проверить на телефоне с отключённым DocumentsUI (или в эмуляторе без обработчика), что приложение не падает
-- [ ] 1.2 Добавить запись ZIP в `Downloads/CarMusicMeter` через `MediaStore` с `IS_PENDING`; проверить на телефоне, что файл появляется в «Загрузках» и открывается
-- [ ] 1.3 Добавить `ACTION_SEND` с content URI сохранённого ZIP и `FLAG_GRANT_READ_URI_PERMISSION`; проверить, что системное меню «Поделиться» открывается
-- [ ] 1.4 Показать после fallback путь к файлу и кнопку «Поделиться»; проверить, что путь читается на экране магнитолы
-- [ ] 1.5 Обновить `docs/HEADUNIT_TEST.md`: SAF-first, Downloads-fallback, где искать ZIP; проверить, что шаги совпадают с поведением
+- [x] 1.1 Обернуть запуск `ACTION_CREATE_DOCUMENT` в `runCatching`; проверить на телефоне с отключённым DocumentsUI (или в эмуляторе без обработчика), что приложение не падает
+- [x] 1.2 Добавить запись ZIP в `Downloads/CarMusicMeter` через `MediaStore` с `IS_PENDING`; проверить на телефоне, что файл появляется в «Загрузках» и открывается
+- [x] 1.3 Добавить `ACTION_SEND` с content URI сохранённого ZIP и `FLAG_GRANT_READ_URI_PERMISSION`; проверить, что системное меню «Поделиться» открывается
+- [x] 1.4 Показать после fallback путь к файлу и кнопку «Поделиться»; проверить, что путь читается на экране магнитолы
+- [x] 1.5 Обновить `docs/HEADUNIT_TEST.md`: SAF-first, Downloads-fallback, где искать ZIP; проверить, что шаги совпадают с поведением
 
 ## 2. Диагностика громкости и уведомлений
 
-- [ ] 2.1 Добавить в снимок все аудиопотоки (`STREAM_MUSIC`, `STREAM_VOICE_CALL`, `STREAM_SYSTEM`, `STREAM_NOTIFICATION`, `STREAM_ALARM`, `STREAM_RING`, `STREAM_ACCESSIBILITY`), `isVolumeFixed`, `audioMode`, `isMusicActive`; проверить JSON-тестом
-- [ ] 2.2 Хранить в `NotificationCache` все последние уведомления с `mediaLike`, в журнал писать только медиаподобные; проверить, что снимок содержит обычное уведомление, а журнал — нет
-- [ ] 2.3 Проверить на телефоне, что снимок с новыми полями открывается и не ломает экспорт
+- [x] 2.1 Добавить в снимок все аудиопотоки (`STREAM_MUSIC`, `STREAM_VOICE_CALL`, `STREAM_SYSTEM`, `STREAM_NOTIFICATION`, `STREAM_ALARM`, `STREAM_RING`, `STREAM_ACCESSIBILITY`), `isVolumeFixed`, `audioMode`, `isMusicActive`; проверить JSON-тестом
+- [x] 2.2 Хранить в `NotificationCache` все последние уведомления с `mediaLike`, в журнал писать только медиаподобные; проверить, что снимок содержит обычное уведомление, а журнал — нет
+- [x] 2.3 Проверить на телефоне, что снимок с новыми полями открывается и не ломает экспорт
 
 ## 3. Диагностика запуска службы
 
-- [ ] 3.1 Передавать источник запуска (`manual`, `boot`, `notification`) через `WatchServiceController`; проверить сборку и ручной запуск
-- [ ] 3.2 Писать `service_started` один раз за запуск; проверить, что повторный `onStartCommand` не дублирует событие
-- [ ] 3.3 Проверить на телефоне: ручной запуск даёт `manual`, перезагрузка — `boot`, старт из уведомления — `notification`
+- [x] 3.1 Передавать источник запуска (`manual`, `boot`, `notification`) через `WatchServiceController`; проверить сборку и ручной запуск
+- [x] 3.2 Писать `service_started` один раз за запуск; проверить, что повторный `onStartCommand` не дублирует событие
+- [x] 3.3 Проверить на телефоне: ручной запуск даёт `manual`, перезагрузка — `boot`, старт из уведомления — `notification`
 
 ## 4. Документация установки
 
-- [ ] 4.1 Описать в `docs/HEADUNIT_TEST.md` установку с Play Protect: сначала с включённой защитой, при блокировке — временно отключить проверку, установить, включить обратно; per-app whitelist у Play Protect нет
-- [ ] 4.2 Описать whitelist Teyes («Автозапуск»/«Защита приложений») и проверку `boot_received` в JSONL; проверить, что шаги понятны без чтения кода
-- [ ] 4.3 Обновить README/`docs/ARCHITECTURE.md`: экспорт через Downloads и новые диагностические поля
+- [x] 4.1 Описать в `docs/HEADUNIT_TEST.md` установку с Play Protect: сначала с включённой защитой, при блокировке — временно отключить проверку, установить, включить обратно; per-app whitelist у Play Protect нет
+- [x] 4.2 Описать whitelist Teyes («Автозапуск»/«Защита приложений») и проверку `boot_received` в JSONL; проверить, что шаги понятны без чтения кода
+- [x] 4.3 Обновить README/`docs/ARCHITECTURE.md`: экспорт через Downloads и новые диагностические поля
 
 ## 5. Проверка и выезд
 
-- [ ] 5.1 Прогнать `:app:testDebugUnitTest` и `openspec validate --all`; все проверки зелёные
+- [x] 5.1 Прогнать `:app:testDebugUnitTest` и `openspec validate --all`; все проверки зелёные
 - [ ] 5.2 Собрать APK и проверить на телефоне: SAF-экспорт, fallback в Downloads, «Поделиться», снимок, `service_started`
-- [ ] 5.3 Подготовить чек-лист выезда: установка, whitelist, локальный плеер + снимок, громкость 4 + снимок, экспорт, ребут и `boot_received`
+- [x] 5.3 Подготовить чек-лист выезда: установка, whitelist, локальный плеер + снимок, громкость 4 + снимок, экспорт, ребут и `boot_received`
 - [ ] 5.4 Разобрать ZIP с машины: проверить `isVolumeFixed`, значения потоков, `mediaLike` у локального плеера и `service_started`
 
 ## Workflow follow-up

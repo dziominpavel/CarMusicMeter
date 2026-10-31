@@ -62,7 +62,8 @@ NotificationListener ─► NotificationCache ───────────�
 | `playback_paused` / `playback_resumed` / `playback_stopped` | смена состояния | `trackKey`, `positionMs`, `playedMs` |
 | `seek` | позиция скакнула больше чем на 5 с | `fromMs`, `toMs`, `deltaMs` |
 | `volume_changed` | изменилась громкость | `previous`, `value`, `max`, `delta`, `level`, `trackKey` |
-| `notification` | медиа-уведомление | `package`, `title`, `text`, `bigText`, `actions`, `hasMediaSession` |
+| `notification` | уведомление | `package`, `title`, `text`, `bigText`, `actions`, `hasMediaSession`, `mediaLike` |
+| `service_started` | служба запущена | `source` (`manual`, `boot`, `notification`) |
 | `app_crash` | необработанное исключение | `message`, `exception`, `file` |
 | `boot_received` | получен boot-интент | `action` |
 | `service_start_failed` | не удалось стартовать foreground-службу | `error`, `source` |
@@ -81,10 +82,15 @@ NotificationListener ─► NotificationCache ───────────�
 
 - `files/logs/` — дневные JSONL-файлы; `files/snapshots/` — JSON-снимки;
   crash-файлы лежат рядом с журналом.
+- Снимок содержит `volume` для `STREAM_MUSIC`, `volumes` для всех потоков,
+  `isVolumeFixed`, `audioMode`, `isMusicActive` и последние уведомления с
+  `mediaLike`.
 - При старте `EventLog.trimOld()` удаляет логи старше **180 дней** и оставляет
   **600 последних снимков**. Отдельного лимита объёма и настройки срока пока нет.
 - Экспорт забирает **все текущиеся файлы** журнала и снимков, без фильтра по
   периоду; состав фиксируется в `manifest.json` (размер и SHA-256 каждого файла).
+- Если системного диалога сохранения нет (Teyes), ZIP пишется в
+  `Downloads/CarMusicMeter` через `MediaStore`, а не роняет приложение.
 - Очистка сейчас опирается на `lastModified` файла. Для дневных логов надёжнее
   брать дату из имени: часы магнитолы могут сбиваться.
 - Планируется: настраиваемый срок хранения, защитный лимит объёма, диапазон

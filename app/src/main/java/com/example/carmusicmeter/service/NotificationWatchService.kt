@@ -41,7 +41,7 @@ class NotificationWatchService : NotificationListenerService() {
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName == packageName) return
         val notification = sbn.notification ?: return
-        if (!isMediaLike(notification)) return
+        val mediaLike = isMediaLike(notification)
 
         val title = text(notification, Notification.EXTRA_TITLE)
         val text = text(notification, Notification.EXTRA_TEXT)
@@ -63,6 +63,7 @@ class NotificationWatchService : NotificationListenerService() {
             subText,
             template,
             actions,
+            mediaLike,
         ).joinToString("|")
         if (lastSignatureByPackage[sbn.packageName] == signature) return
         lastSignatureByPackage[sbn.packageName] = signature
@@ -78,12 +79,15 @@ class NotificationWatchService : NotificationListenerService() {
             "template" to template,
             "ongoing" to ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0),
             "hasMediaSession" to notification.extras.containsKey(Notification.EXTRA_MEDIA_SESSION),
+            "mediaLike" to mediaLike,
             "actions" to actions,
             "channelId" to notification.channelId,
             "postTime" to sbn.postTime,
         )
 
         NotificationCache.add(Json.objectFrom(fields, ts = ts, type = "notification"))
+        if (!mediaLike) return
+
         val event = LogEvent(ts, "notification", fields)
         app.eventLog.append(event)
         ListeningRepository.record(listOf(event))
@@ -93,7 +97,7 @@ class NotificationWatchService : NotificationListenerService() {
     private fun maybeStartWatch() {
         if (!app.prefs.autoStart) return
         if (ListeningRepository.state.value.serviceRunning) return
-        runCatching { WatchServiceController.start(this) }
+        runCatching { WatchServiceController.start(this, StartSource.NOTIFICATION) }
             .onFailure { error ->
                 app.eventLog.append(
                     LogEvent(

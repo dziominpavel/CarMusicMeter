@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.example.carmusicmeter.CarMusicMeterApp
 import com.example.carmusicmeter.data.LogEvent
+import com.example.carmusicmeter.service.StartSource
 import com.example.carmusicmeter.service.WatchServiceController
 
 /**
@@ -25,7 +26,7 @@ class BootReceiver : BroadcastReceiver() {
         )
         if (!app.prefs.autoStart) return
 
-        runCatching { WatchServiceController.start(context) }
+        runCatching { WatchServiceController.start(context, StartSource.BOOT) }
             .onFailure { error ->
                 app.eventLog.append(
                     LogEvent(

@@ -4,13 +4,20 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 
+enum class StartSource(val value: String) {
+    MANUAL("manual"),
+    BOOT("boot"),
+    NOTIFICATION("notification"),
+}
+
 object WatchServiceController {
 
-    fun start(context: Context) {
-        ContextCompat.startForegroundService(
-            context,
-            Intent(context, MediaWatchService::class.java),
-        )
+    const val EXTRA_SOURCE = "start_source"
+
+    fun start(context: Context, source: StartSource) {
+        val intent = Intent(context, MediaWatchService::class.java)
+            .putExtra(EXTRA_SOURCE, source.value)
+        ContextCompat.startForegroundService(context, intent)
     }
 
     fun stop(context: Context) {

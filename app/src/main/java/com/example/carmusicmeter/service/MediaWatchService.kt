@@ -51,6 +51,7 @@ class MediaWatchService : Service() {
     private lateinit var snapshotWriter: SnapshotWriter
     private var lastCapture = MediaSessionProbe.CaptureResult(emptyList(), null)
     private var lastNotificationSignature: String? = null
+    private var startEventLogged = false
 
     private val app: CarMusicMeterApp get() = application as CarMusicMeterApp
 
@@ -66,10 +67,24 @@ class MediaWatchService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundCompat()
+        logServiceStart(intent)
         if (loopJob?.isActive != true) {
             loopJob = scope.launch { watchLoop() }
         }
         return START_STICKY
+    }
+
+    private fun logServiceStart(intent: Intent?) {
+        if (startEventLogged) return
+        val source = intent?.getStringExtra(WatchServiceController.EXTRA_SOURCE) ?: return
+        startEventLogged = true
+        app.eventLog.append(
+            LogEvent(
+                ts = System.currentTimeMillis(),
+                type = "service_started",
+                fields = mapOf("source" to source),
+            ),
+        )
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

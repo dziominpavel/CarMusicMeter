@@ -6,6 +6,7 @@ import android.media.AudioManager
 import android.os.Build
 import com.example.carmusicmeter.BuildConfig
 import com.example.carmusicmeter.CarMusicMeterApp
+import com.example.carmusicmeter.data.AudioDiagnostics
 import com.example.carmusicmeter.data.Json
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.LiveTrack
@@ -69,6 +70,13 @@ class SnapshotWriter(
                 put("music", volume)
                 put("max", volumeMax)
             })
+            AudioDiagnostics.snapshot(
+                volume = { runCatching { audio.getStreamVolume(it) }.getOrDefault(-1) },
+                max = { runCatching { audio.getStreamMaxVolume(it) }.getOrDefault(-1) },
+                isVolumeFixed = audio.isVolumeFixed,
+                audioMode = audio.mode,
+                isMusicActive = audio.isMusicActive,
+            ).forEach { (key, value) -> put(key, Json.toJsonValue(value)) }
             put("audioOutputs", audioOutputs(audio))
             put("live", live?.toJson() ?: JSONObject.NULL)
             put("sessions", sessions ?: probe.sessionsJson())

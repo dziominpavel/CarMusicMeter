@@ -3,7 +3,10 @@ package com.example.carmusicmeter.probe
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Последние медиа-уведомления: нужны для снимка и резервного разбора. */
+/**
+ * Последние уведомления в памяти. В снимок попадают все, с признаком
+ * `mediaLike`; в журнал по-прежнему пишутся только медиаподобные.
+ */
 object NotificationCache {
 
     private const val LIMIT = 40
