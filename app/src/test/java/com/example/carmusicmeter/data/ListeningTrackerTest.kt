@@ -73,6 +73,24 @@ class ListeningTrackerTest {
     }
 
     @Test
+    fun `сброс позиции в ноль на паузе не считается перемоткой`() {
+        val tracker = ListeningTracker()
+        val events = mutableListOf<LogEvent>()
+
+        events += tracker.onTick(0, snap("A", 0), 10, 30).events
+        events += tracker.onTick(10_000, snap("A", 10_000), 10, 30).events
+        // Штатный плеер на паузе отдаёт 0 вместо реальной позиции.
+        events += tracker.onTick(11_000, snap("A", 1, phase = MediaPhase.PAUSED), 10, 30).events
+        events += tracker.onTick(13_000, snap("A", 0, phase = MediaPhase.PAUSED), 10, 30).events
+        // Переключение на следующий трек.
+        events += tracker.onTick(15_000, snap("B", 0), 10, 30).events
+
+        assertEquals(11_000L, events.single { it.type == "playback_paused" }.fields["positionMs"])
+        assertTrue(events.none { it.type == "seek" })
+        assertEquals(11_000L, events.single { it.type == "track_ended" }.fields["endPositionMs"])
+    }
+
+    @Test
     fun `скачок позиции больше пяти секунд — перемотка`() {
         val tracker = ListeningTracker()
         val events = mutableListOf<LogEvent>()

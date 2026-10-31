@@ -125,6 +125,9 @@ class ListeningTracker {
         val oldPhase = current.snapshot.phase
         val newPhase = snapshot.phase
         val phaseChanged = oldPhase != newPhase
+        val reported = snapshot.positionMs
+        val expected = expectedPosition(current, nowMs)
+        val positionReset = isPositionReset(newPhase, reported, expected)
 
         if (phaseChanged) {
             val eventType = when (newPhase) {
@@ -142,18 +145,33 @@ class ListeningTracker {
                         "package" to current.snapshot.packageName,
                         "title" to current.snapshot.title,
                         "artist" to current.snapshot.artist,
-                        "positionMs" to (snapshot.positionMs ?: extrapolatePosition(current, nowMs)),
+                        "positionMs" to if (positionReset) {
+                            expected
+                        } else {
+                            reported ?: extrapolatePosition(current, nowMs)
+                        },
                         "playedMs" to current.playedMs,
                     ),
                 )
             }
         }
 
-        if (!phaseChanged) {
-            val reported = snapshot.positionMs
+        if (positionReset) {
+            // Плеер на паузе/остановке отдаёт 0 вместо реальной позиции
+            // (так делает, например, штатный плеер Huawei). Держим оценку,
+            // иначе позиция в событиях падает в начало трека.
+            current.lastPositionMs = expected
+            current.lastPositionAtMs = nowMs
+        } else if (phaseChanged) {
+            // При смене фазы позиция может «отставать» от нашей экстраполяции:
+            // это не перемотка, а пауза/возобновление. Просто берём новую базу.
+            reported?.let {
+                current.lastPositionMs = it
+                current.lastPositionAtMs = nowMs
+            }
+        } else {
             val previous = current.lastPositionMs
             if (reported != null && previous != null && reported != previous) {
-                val expected = expectedPosition(current, nowMs)
                 val delta = reported - expected
                 if (abs(delta) > SEEK_THRESHOLD_MS) {
                     events += LogEvent(
@@ -173,13 +191,6 @@ class ListeningTracker {
                 current.lastPositionAtMs = nowMs
             } else if (reported != null && previous == null) {
                 current.lastPositionMs = reported
-                current.lastPositionAtMs = nowMs
-            }
-        } else {
-            // При смене фазы позиция может «отставать» от нашей экстраполяции:
-            // это не перемотка, а пауза/возобновление. Просто берём новую базу.
-            snapshot.positionMs?.let {
-                current.lastPositionMs = it
                 current.lastPositionAtMs = nowMs
             }
         }
@@ -224,6 +235,16 @@ class ListeningTracker {
         }
         active.lastTickAtMs = nowMs
     }
+
+    /**
+     * Плеер на паузе или остановке отдаёт почти ноль вместо реальной позиции.
+     * Это не перемотка: так делает, например, штатный плеер Huawei.
+     */
+    private fun isPositionReset(phase: MediaPhase, reported: Long?, expected: Long): Boolean =
+        (phase == MediaPhase.PAUSED || phase == MediaPhase.STOPPED) &&
+            reported != null &&
+            reported <= POSITION_RESET_MAX_MS &&
+            expected > SEEK_THRESHOLD_MS
 
     private fun expectedPosition(active: Active, nowMs: Long): Long {
         val base = active.lastPositionMs ?: 0L
@@ -338,5 +359,8 @@ class ListeningTracker {
 
         /** Недобор до конца трека, который ещё считается дослушиванием. */
         const val COMPLETE_SLACK_MS = 3_000L
+
+        /** Позиция на паузе ниже этого значения считается сбросом в ноль. */
+        const val POSITION_RESET_MAX_MS = 1_000L
     }
 }
