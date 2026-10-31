@@ -24,7 +24,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.carmusicmeter.AppVersion
@@ -71,6 +71,7 @@ fun ProbeScreen(
     onStopService: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
     onOpenBatterySettings: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onSnapshot: () -> Unit,
     onExport: () -> Unit,
 ) {
@@ -92,6 +93,7 @@ fun ProbeScreen(
             onOpenBatterySettings = onOpenBatterySettings,
         )
         LiveCard(state)
+        StockPlayerCard(state = state, onOpenAccessibilitySettings = onOpenAccessibilitySettings)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = onSnapshot,
@@ -224,6 +226,7 @@ private fun LiveCard(state: LiveState) {
         shape = CardShape,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.22f)),
     ) {
@@ -315,14 +318,88 @@ private fun LiveTrackBody(live: LiveTrack) {
     }
 
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        InfoPill("громкость ${live.volume}/${live.volumeMax}")
-        InfoPill("${live.metadataKeys.size} ключей")
+        InfoPill(volumeLabel(live))
+        InfoPill("источник: ${sourceLabel(live.source)}")
     }
     Text(
-        text = live.packageName,
+        text = "${live.metadataKeys.size} ключей · ${live.packageName}",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+@Composable
+private fun StockPlayerCard(
+    state: LiveState,
+    onOpenAccessibilitySettings: () -> Unit,
+) {
+    val stockSource = state.stockSource
+        ?: state.live?.source?.takeIf { it != "media_session" }
+    val hasStock = stockSource != null
+    Card(
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Штатный плеер",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Surface(
+                    color = (if (hasStock) StatusOk else StatusWarn).copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(50),
+                ) {
+                    Text(
+                        text = if (hasStock) "данные есть" else "нет данных",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (hasStock) StatusOk else StatusWarn,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            Text(
+                text = if (hasStock) {
+                    "Источник: ${sourceLabel(stockSource!!)}. Название и исполнитель попадают в журнал."
+                } else {
+                    "MediaSession не публикуется. Включи чтение интерфейса — приложение будет читать название в открытом окне плеера."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Чтение интерфейса", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = if (state.accessibilityEnabled) "включено" else "выключено",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (state.accessibilityEnabled) StatusOk else StatusWarn,
+                    )
+                }
+                TextButton(onClick = onOpenAccessibilitySettings) {
+                    Text(if (state.accessibilityEnabled) "Настройки" else "Включить")
+                }
+            }
+            Text(
+                text = "Громкость: ${sourceLabel(state.volumeSource)}" +
+                    state.mcuVolume?.let { " · MCU $it" }.orEmpty(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!state.teyesAvailable) {
+                Text(
+                    text = "MCU недоступен — используется громкость Android",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -356,6 +433,8 @@ private fun InfoPill(text: String) {
             text = text,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
         )
     }
@@ -449,59 +528,108 @@ private fun DataCard(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = retentionDays == 0,
-                    onClick = { onRetentionChange(0) },
-                    label = { Text("Бессрочно") },
-                )
-                FilterChip(
-                    selected = retentionDays == 365,
-                    onClick = { onRetentionChange(365) },
-                    label = { Text("1 год") },
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = retentionDays == 180,
-                    onClick = { onRetentionChange(180) },
-                    label = { Text("180 дней") },
-                )
-                FilterChip(
-                    selected = retentionDays == 90,
-                    onClick = { onRetentionChange(90) },
-                    label = { Text("90 дней") },
-                )
-            }
+            RetentionPresets(
+                retentionDays = retentionDays,
+                onRetentionChange = onRetentionChange,
+            )
             Text(
                 text = "Период экспорта",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = exportRange == ExportRange.ALL,
-                    onClick = { onExportRangeChange(ExportRange.ALL) },
-                    label = { Text(ExportRange.ALL.label) },
-                )
-                FilterChip(
-                    selected = exportRange == ExportRange.DAYS_90,
-                    onClick = { onExportRangeChange(ExportRange.DAYS_90) },
-                    label = { Text(ExportRange.DAYS_90.label) },
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = exportRange == ExportRange.DAYS_30,
-                    onClick = { onExportRangeChange(ExportRange.DAYS_30) },
-                    label = { Text(ExportRange.DAYS_30.label) },
-                )
-                FilterChip(
-                    selected = exportRange == ExportRange.DAYS_7,
-                    onClick = { onExportRangeChange(ExportRange.DAYS_7) },
-                    label = { Text(ExportRange.DAYS_7.label) },
-                )
-            }
+            ExportPresets(
+                exportRange = exportRange,
+                onExportRangeChange = onExportRangeChange,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RetentionPresets(
+    retentionDays: Int,
+    onRetentionChange: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        CompactChip("Бессрочно", retentionDays == 0, Modifier.weight(1.2f)) { onRetentionChange(0) }
+        CompactChip("1 год", retentionDays == 365, Modifier.weight(1f)) { onRetentionChange(365) }
+        CompactChip("180 дней", retentionDays == 180, Modifier.weight(1.1f)) { onRetentionChange(180) }
+        CompactChip("90 дней", retentionDays == 90, Modifier.weight(1f)) { onRetentionChange(90) }
+    }
+}
+
+@Composable
+private fun ExportPresets(
+    exportRange: ExportRange,
+    onExportRangeChange: (ExportRange) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        CompactChip(ExportRange.ALL.label, exportRange == ExportRange.ALL, Modifier.weight(1.3f)) {
+            onExportRangeChange(ExportRange.ALL)
+        }
+        CompactChip(ExportRange.DAYS_90.label, exportRange == ExportRange.DAYS_90, Modifier.weight(1f)) {
+            onExportRangeChange(ExportRange.DAYS_90)
+        }
+        CompactChip(ExportRange.DAYS_30.label, exportRange == ExportRange.DAYS_30, Modifier.weight(1f)) {
+            onExportRangeChange(ExportRange.DAYS_30)
+        }
+        CompactChip(ExportRange.DAYS_7.label, exportRange == ExportRange.DAYS_7, Modifier.weight(1f)) {
+            onExportRangeChange(ExportRange.DAYS_7)
+        }
+    }
+}
+
+@Composable
+private fun CompactChip(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    val background = if (selected) {
+        MaterialTheme.colorScheme.secondaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+    }
+    val foreground = if (selected) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(38.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = background,
+        border = BorderStroke(
+            1.dp,
+            if (selected) {
+                MaterialTheme.colorScheme.secondary
+            } else {
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
+            },
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelMedium,
+                color = foreground,
+            )
         }
     }
 }
@@ -522,7 +650,8 @@ private fun AutoStartCard(autoStart: Boolean, onAutoStartChange: (Boolean) -> Un
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = "После загрузки и при появлении музыки",
+                    text = "После загрузки, при появлении музыки и при открытии приложения. " +
+                        "В Teyes дополнительно: Настройки → Пользователь → Настройки приложений → CarMusicMeter.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -588,6 +717,25 @@ private fun EventRow(event: LogEvent) {
             )
         }
     }
+}
+
+private fun volumeLabel(live: LiveTrack): String {
+    val source = sourceLabel(live.volumeSource)
+    return if (live.volumeMax > 0) {
+        "громкость ${live.volume}/${live.volumeMax} · $source"
+    } else {
+        "громкость ${live.volume} · $source"
+    }
+}
+
+private fun sourceLabel(source: String?): String = when (source) {
+    "media_session" -> "MediaSession"
+    "fyt_broadcast" -> "лаунчер"
+    "accessibility" -> "интерфейс"
+    "notification" -> "уведомление"
+    "mcu" -> "MCU"
+    "audio" -> "Android"
+    else -> source ?: "—"
 }
 
 @Composable

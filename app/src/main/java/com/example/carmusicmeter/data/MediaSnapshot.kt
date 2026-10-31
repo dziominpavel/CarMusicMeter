@@ -23,6 +23,7 @@ data class MediaSnapshot(
     val mediaId: String? = null,
     val metadataKeys: List<String> = emptyList(),
     val hasArtwork: Boolean = false,
+    val source: String = StockPlayerSources.MEDIA_SESSION,
 ) {
     /** Стабильный ключ трека в пределах одного плеера. */
     val trackKey: String
@@ -55,4 +56,6 @@ data class LiveTrack(
     val playedMs: Long,
     val mediaId: String?,
     val metadataKeys: List<String>,
+    val source: String = StockPlayerSources.MEDIA_SESSION,
+    val volumeSource: String = "audio",
 )

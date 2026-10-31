@@ -9,10 +9,17 @@ import kotlinx.coroutines.flow.update
 data class LiveState(
     val serviceRunning: Boolean = false,
     val notificationAccess: Boolean = false,
+    val accessibilityEnabled: Boolean = false,
     val batteryUnrestricted: Boolean = false,
     val live: LiveTrack? = null,
     val volume: Int = 0,
     val volumeMax: Int = 0,
+    val volumeSource: String = "audio",
+    val teyesAvailable: Boolean = false,
+    val teyesError: String? = null,
+    val mcuVolume: Int? = null,
+    val mcuMuted: Boolean? = null,
+    val stockSource: String? = null,
     val error: String? = null,
     val lastEventAt: Long? = null,
     val eventsToday: Int = 0,
@@ -43,6 +50,10 @@ object ListeningRepository {
         _state.update { it.copy(notificationAccess = granted) }
     }
 
+    fun setAccessibilityEnabled(enabled: Boolean) {
+        _state.update { it.copy(accessibilityEnabled = enabled) }
+    }
+
     fun setBatteryUnrestricted(unrestricted: Boolean) {
         _state.update { it.copy(batteryUnrestricted = unrestricted) }
     }
@@ -53,6 +64,13 @@ object ListeningRepository {
         volumeMax: Int,
         notificationAccess: Boolean,
         error: String?,
+        volumeSource: String = "audio",
+        teyesAvailable: Boolean = false,
+        teyesError: String? = null,
+        mcuVolume: Int? = null,
+        mcuMuted: Boolean? = null,
+        stockSource: String? = null,
+        accessibilityEnabled: Boolean = false,
     ) {
         _state.update { previous ->
             val newSession = live != null && live.packageName != previous.live?.packageName
@@ -60,6 +78,13 @@ object ListeningRepository {
                 live = live,
                 volume = volume,
                 volumeMax = volumeMax,
+                volumeSource = volumeSource,
+                teyesAvailable = teyesAvailable,
+                teyesError = teyesError,
+                mcuVolume = mcuVolume,
+                mcuMuted = mcuMuted,
+                stockSource = stockSource,
+                accessibilityEnabled = accessibilityEnabled,
                 notificationAccess = notificationAccess,
                 error = error,
                 sessionsSeen = if (newSession) previous.sessionsSeen + 1 else previous.sessionsSeen,

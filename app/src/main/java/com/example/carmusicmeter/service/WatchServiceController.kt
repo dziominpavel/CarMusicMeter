@@ -8,6 +8,11 @@ enum class StartSource(val value: String) {
     MANUAL("manual"),
     BOOT("boot"),
     NOTIFICATION("notification"),
+    ACCESSIBILITY("accessibility"),
+    APP_OPEN("app_open"),
+    JOB("job"),
+    MEDIA_MOUNTED("media_mounted"),
+    TEYES_AUTOSTART("teyes_autostart"),
 }
 
 object WatchServiceController {

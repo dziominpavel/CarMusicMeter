@@ -7,7 +7,11 @@ import com.example.carmusicmeter.CarMusicMeterApp
 import com.example.carmusicmeter.data.Json
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.LogEvent
+import com.example.carmusicmeter.data.StockPlayerBridge
+import com.example.carmusicmeter.data.StockPlayerParser
+import com.example.carmusicmeter.data.StockPlayerProtocol
 import com.example.carmusicmeter.probe.NotificationCache
+import com.example.carmusicmeter.probe.NotificationTextExtractor
 
 /**
  * Доступ к уведомлениям нужен по двум причинам:
@@ -18,6 +22,7 @@ import com.example.carmusicmeter.probe.NotificationCache
 class NotificationWatchService : NotificationListenerService() {
 
     private val lastSignatureByPackage = mutableMapOf<String, String>()
+    private val lastRemoteExtractAt = mutableMapOf<String, Long>()
 
     private val app: CarMusicMeterApp get() = application as CarMusicMeterApp
 
@@ -38,10 +43,12 @@ class NotificationWatchService : NotificationListenerService() {
         super.onListenerDisconnected()
     }
 
+    @Suppress("DEPRECATION")
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         if (sbn.packageName == packageName) return
         val notification = sbn.notification ?: return
         val mediaLike = isMediaLike(notification)
+        val stock = StockPlayerProtocol.isStockPackage(sbn.packageName)
 
         val title = text(notification, Notification.EXTRA_TITLE)
         val text = text(notification, Notification.EXTRA_TEXT)
@@ -54,6 +61,14 @@ class NotificationWatchService : NotificationListenerService() {
             ?.mapNotNull { it.title?.toString()?.trim() }
             ?.filter { it.isNotEmpty() }
             .orEmpty()
+        val now = System.currentTimeMillis()
+        val extras = if (stock) NotificationTextExtractor.extras(notification) else emptyMap()
+        val remoteTexts = if (stock && now - (lastRemoteExtractAt[sbn.packageName] ?: 0L) >= 2_000L) {
+            lastRemoteExtractAt[sbn.packageName] = now
+            NotificationTextExtractor.remoteTexts(this, sbn.packageName, notification)
+        } else {
+            emptyList()
+        }
 
         val signature = listOf(
             sbn.packageName,
@@ -64,6 +79,8 @@ class NotificationWatchService : NotificationListenerService() {
             template,
             actions,
             mediaLike,
+            extras,
+            remoteTexts,
         ).joinToString("|")
         if (lastSignatureByPackage[sbn.packageName] == signature) return
         lastSignatureByPackage[sbn.packageName] = signature
@@ -84,13 +101,28 @@ class NotificationWatchService : NotificationListenerService() {
             "channelId" to notification.channelId,
             "postTime" to sbn.postTime,
         )
+        if (stock) {
+            fields["hasRemoteViews"] = notification.contentView != null ||
+                notification.bigContentView != null
+            if (extras.isNotEmpty()) fields["extras"] = extras
+            if (remoteTexts.isNotEmpty()) fields["remoteTexts"] = remoteTexts
+            StockPlayerParser.fromNotification(
+                packageName = sbn.packageName,
+                title = title ?: remoteTexts.firstOrNull(),
+                text = text ?: remoteTexts.getOrNull(1),
+                remoteTexts = remoteTexts,
+                nowMs = now,
+            )?.let(StockPlayerBridge::update)
+        }
 
         NotificationCache.add(Json.objectFrom(fields, ts = ts, type = "notification"))
-        if (!mediaLike) return
+        if (!mediaLike && !stock) return
 
-        val event = LogEvent(ts, "notification", fields)
-        app.eventLog.append(event)
-        ListeningRepository.record(listOf(event))
+        if (mediaLike) {
+            val event = LogEvent(ts, "notification", fields)
+            app.eventLog.append(event)
+            ListeningRepository.record(listOf(event))
+        }
         maybeStartWatch()
     }
 

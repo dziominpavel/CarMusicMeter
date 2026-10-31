@@ -3,6 +3,7 @@ package com.example.carmusicmeter
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import com.example.carmusicmeter.autostart.AutostartScheduler
 import com.example.carmusicmeter.data.EventLog
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.Prefs
@@ -24,6 +25,7 @@ class CarMusicMeterApp : Application() {
         ListeningRepository.attach(eventLog)
         createNotificationChannel()
         eventLog.trimOld(prefs.storagePolicy())
+        AutostartScheduler.sync(this, prefs.autoStart)
     }
 
     private fun createNotificationChannel() {

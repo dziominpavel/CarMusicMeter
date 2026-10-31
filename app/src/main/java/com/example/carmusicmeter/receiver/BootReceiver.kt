@@ -4,14 +4,17 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.example.carmusicmeter.CarMusicMeterApp
+import com.example.carmusicmeter.autostart.AutostartScheduler
 import com.example.carmusicmeter.data.LogEvent
 import com.example.carmusicmeter.service.StartSource
 import com.example.carmusicmeter.service.WatchServiceController
 
 /**
- * Автозапуск после загрузки магнитолы. Прошивка Teyes выключает питание
- * вместе с зажиганием, поэтому без этого служба стартовала бы только
- * после ручного открытия приложения.
+ * Будит службу после загрузки, обновления приложения или монтирования флешки.
+ *
+ * Прошивка Teyes может не отдавать BOOT_COMPLETED без своего whitelist,
+ * поэтому рядом работают persisted JobScheduler и отдельная activity
+ * «CarMusicMeter (автозапуск)».
  */
 class BootReceiver : BroadcastReceiver() {
 
@@ -26,13 +29,19 @@ class BootReceiver : BroadcastReceiver() {
         )
         if (!app.prefs.autoStart) return
 
-        runCatching { WatchServiceController.start(context, StartSource.BOOT) }
+        AutostartScheduler.sync(context, enabled = true)
+        val source = if (action == Intent.ACTION_MEDIA_MOUNTED) {
+            StartSource.MEDIA_MOUNTED
+        } else {
+            StartSource.BOOT
+        }
+        runCatching { WatchServiceController.start(context, source) }
             .onFailure { error ->
                 app.eventLog.append(
                     LogEvent(
                         System.currentTimeMillis(),
                         "service_start_failed",
-                        mapOf("error" to error.message, "source" to "boot"),
+                        mapOf("error" to error.message, "source" to source.value),
                     ),
                 )
             }
@@ -42,6 +51,7 @@ class BootReceiver : BroadcastReceiver() {
         val ACTIONS = setOf(
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
+            Intent.ACTION_MEDIA_MOUNTED,
             "android.intent.action.QUICKBOOT_POWERON",
             "com.htc.intent.action.QUICKBOOT_POWERON",
         )

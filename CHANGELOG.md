@@ -11,6 +11,10 @@
 - Снимок показывает все аудиопотоки и уведомления, а журнал — источник запуска службы.
 - История хранится бессрочно с лимитом 500 МБ; срок и период экспорта настраиваются в разделе «Данные».
 - Экспорт получил пресеты 90/30/7 дней, оценку объёма и диапазон с фактическими датами в манифесте.
+- Штатный плеер Teyes теперь можно читать без MediaSession: через лаунчер, уведомление или окно плеера.
+- Громкость панели Teyes читается через MCU и попадает в события как source=mcu.
+- Автозапуск усилен: JobScheduler, монтирование флешки, старт при открытии и отдельный пункт для Teyes.
+- Пресеты срока хранения и периода экспорта помещаются в одну строку.
 
 **Исправлено**
 - Позиция трека больше не сбрасывается в ноль, когда плеер на паузе отдаёт пустую позицию.
@@ -22,4 +26,8 @@
 - `event-log`: JSONL с fsync, снимки окружения, экспорт ZIP через SAF с fallback в Downloads, crash-лог.
 - `event-log`: диагностика всех аудиопотоков, `isVolumeFixed` и источник запуска службы.
 - `event-log`: `StoragePolicy`, `retention_trimmed`, диапазон экспорта и поля `range`/`coverage`.
-- Тесты `ListeningTracker`: завершение, пропуск, пауза, перемотка, громкость, потеря сессии.
+- `playback-capture`: `StockPlayerBridge`, `titlesReceiver`, `RemoteViews`/extras, accessibility и `SourcePicker`.
+- `volume-tracking`: `TeyesToolkitClient` (MCU `U_VOL`/`U_MUTE`), `VolumeSelector`, `source` и неизвестный максимум.
+- `event-log`: `stock_player_text`, `teyes_toolkit`, `stockPlayer`/`teyes`/`packages` в снимке.
+- `autostart`: persisted `AutostartJobService`, `MEDIA_MOUNTED`, `app_open`, `AutostartActivity`.
+- Тесты: разбор broadcast, accessibility/notification, выбор источника, MCU-громкость и смена источника.

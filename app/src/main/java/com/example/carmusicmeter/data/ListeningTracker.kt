@@ -36,6 +36,7 @@ class ListeningTracker {
     private var active: Active? = null
     private var lastVolume: Int? = null
     private var lastVolumeMax: Int? = null
+    private var lastVolumeSource: String? = null
 
     val currentPackage: String?
         get() = active?.snapshot?.packageName
@@ -44,11 +45,33 @@ class ListeningTracker {
      * Отдельный быстрый опрос громкости. Не создаёт событий, пока значение
      * не изменилось; при изменении привязывает его к текущему треку.
      */
-    fun onVolume(nowMs: Long, volume: Int, volumeMax: Int): List<LogEvent> {
+    fun onVolume(
+        nowMs: Long,
+        volume: Int,
+        volumeMax: Int,
+        source: String = "audio",
+        muted: Boolean = false,
+    ): List<LogEvent> {
         val previous = lastVolume
         val previousMax = lastVolumeMax
+        val previousSource = lastVolumeSource
+
+        if (previousSource != null && previousSource != source) {
+            lastVolume = volume
+            lastVolumeMax = volumeMax
+            lastVolumeSource = source
+            active?.let {
+                it.volumeStart = volume
+                it.volumeLow = volume
+                it.volumeHigh = volume
+                it.volumeChanges = 0
+            }
+            return emptyList()
+        }
+
         lastVolume = volume
         lastVolumeMax = volumeMax
+        lastVolumeSource = source
         if (previous == null || previousMax == null) return emptyList()
         if (previous == volume && previousMax == volumeMax) return emptyList()
 
@@ -66,10 +89,12 @@ class ListeningTracker {
                 fields = linkedMapOf(
                     "previous" to previous,
                     "value" to volume,
-                    "max" to volumeMax,
-                    "previousMax" to previousMax,
+                    "max" to volumeMax.takeIf { it > 0 },
+                    "previousMax" to previousMax.takeIf { it > 0 },
                     "delta" to (volume - previous),
-                    "level" to if (volumeMax > 0) volume.toDouble() / volumeMax else 0.0,
+                    "level" to if (volumeMax > 0) volume.toDouble() / volumeMax else null,
+                    "source" to source,
+                    "muted" to muted,
                     "trackKey" to current?.key,
                     "title" to current?.snapshot?.title,
                     "artist" to current?.snapshot?.artist,
@@ -84,10 +109,24 @@ class ListeningTracker {
         snapshot: MediaSnapshot?,
         volume: Int,
         volumeMax: Int,
+        source: String = "audio",
+        muted: Boolean = false,
     ): TickResult {
+        if (lastVolumeSource != null && lastVolumeSource != source) {
+            lastVolume = volume
+            lastVolumeMax = volumeMax
+            lastVolumeSource = source
+            active?.let {
+                it.volumeStart = volume
+                it.volumeLow = volume
+                it.volumeHigh = volume
+                it.volumeChanges = 0
+            }
+        }
         if (lastVolume == null) {
             lastVolume = volume
             lastVolumeMax = volumeMax
+            lastVolumeSource = source
         }
 
         val events = mutableListOf<LogEvent>()
@@ -143,6 +182,7 @@ class ListeningTracker {
                     fields = linkedMapOf(
                         "trackKey" to current.key,
                         "package" to current.snapshot.packageName,
+                        "source" to current.snapshot.source,
                         "title" to current.snapshot.title,
                         "artist" to current.snapshot.artist,
                         "positionMs" to if (positionReset) {
@@ -267,6 +307,7 @@ class ListeningTracker {
             "trackKey" to active.key,
             "package" to active.snapshot.packageName,
             "sessionTag" to active.snapshot.sessionTag,
+            "source" to active.snapshot.source,
             "title" to active.snapshot.title,
             "artist" to active.snapshot.artist,
             "album" to active.snapshot.album,
@@ -275,6 +316,7 @@ class ListeningTracker {
             "positionMs" to active.snapshot.positionMs,
             "phase" to active.snapshot.phase.name.lowercase(),
             "volume" to active.volumeStart,
+            "volumeSource" to lastVolumeSource,
             "actions" to active.snapshot.actions,
             "metadataKeys" to active.snapshot.metadataKeys,
             "hasArtwork" to active.snapshot.hasArtwork,
@@ -309,6 +351,7 @@ class ListeningTracker {
             fields = linkedMapOf(
                 "trackKey" to active.key,
                 "package" to active.snapshot.packageName,
+                "source" to active.snapshot.source,
                 "title" to active.snapshot.title,
                 "artist" to active.snapshot.artist,
                 "album" to active.snapshot.album,
@@ -324,6 +367,7 @@ class ListeningTracker {
                 "volumeLow" to active.volumeLow,
                 "volumeHigh" to active.volumeHigh,
                 "volumeChanges" to active.volumeChanges,
+                "volumeSource" to lastVolumeSource,
                 "nextPackage" to next?.packageName,
                 "nextTitle" to next?.title,
             ),
@@ -347,6 +391,8 @@ class ListeningTracker {
             playedMs = active.playedMs,
             mediaId = active.snapshot.mediaId,
             metadataKeys = active.snapshot.metadataKeys,
+            source = active.snapshot.source,
+            volumeSource = lastVolumeSource ?: "audio",
         )
     }
 

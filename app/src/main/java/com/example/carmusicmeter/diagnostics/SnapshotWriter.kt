@@ -10,6 +10,8 @@ import com.example.carmusicmeter.data.AudioDiagnostics
 import com.example.carmusicmeter.data.Json
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.LiveTrack
+import com.example.carmusicmeter.data.StockPlayerBridge
+import com.example.carmusicmeter.data.StockPlayerState
 import com.example.carmusicmeter.probe.MediaSessionProbe
 import com.example.carmusicmeter.probe.NotificationCache
 import org.json.JSONArray
@@ -46,6 +48,7 @@ class SnapshotWriter(
         val volume = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
         val volumeMax = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        val state = ListeningRepository.state.value
 
         return JSONObject().apply {
             put("capturedAt", System.currentTimeMillis())
@@ -65,11 +68,24 @@ class SnapshotWriter(
                 put("sdk", Build.VERSION.SDK_INT)
             })
             put("notificationAccess", probe.hasNotificationAccess())
-            put("serviceRunning", ListeningRepository.state.value.serviceRunning)
+            put("accessibilityEnabled", state.accessibilityEnabled)
+            put("serviceRunning", state.serviceRunning)
             put("volume", JSONObject().apply {
                 put("music", volume)
                 put("max", volumeMax)
+                put("source", state.volumeSource)
+                put("mcu", Json.toJsonValue(state.mcuVolume))
+                put("muted", Json.toJsonValue(state.mcuMuted))
             })
+            put("teyes", JSONObject().apply {
+                put("available", state.teyesAvailable)
+                put("source", state.volumeSource)
+                put("volume", Json.toJsonValue(state.mcuVolume))
+                put("muted", Json.toJsonValue(state.mcuMuted))
+                put("error", Json.toJsonValue(state.teyesError))
+            })
+            put("stockPlayer", StockPlayerBridge.latest()?.toJson() ?: JSONObject.NULL)
+            put("packages", installedPackages())
             AudioDiagnostics.snapshot(
                 volume = { runCatching { audio.getStreamVolume(it) }.getOrDefault(-1) },
                 max = { runCatching { audio.getStreamMaxVolume(it) }.getOrDefault(-1) },
@@ -108,6 +124,46 @@ class SnapshotWriter(
         }
     }
 
+    private fun installedPackages(): JSONArray {
+        val prefixes = listOf(
+            "com.yf",
+            "com.syu",
+            "cn.teyes",
+            "com.android.launcher",
+            "com.example.carmusicmeter",
+        )
+        val packages = runCatching {
+            context.packageManager.getInstalledPackages(0)
+        }.getOrDefault(emptyList())
+        return JSONArray().apply {
+            packages
+                .filter { info -> prefixes.any { prefix -> info.packageName.startsWith(prefix) } }
+                .sortedBy { it.packageName }
+                .forEach { info ->
+                    put(JSONObject().apply {
+                        put("package", info.packageName)
+                        put("versionName", Json.toJsonValue(info.versionName))
+                        put("versionCode", info.longVersionCode)
+                    })
+                }
+        }
+    }
+
+    private fun StockPlayerState.toJson(): JSONObject = JSONObject().apply {
+        put("package", packageName)
+        put("title", Json.toJsonValue(title))
+        put("artist", Json.toJsonValue(artist))
+        put("album", Json.toJsonValue(album))
+        put("path", Json.toJsonValue(path))
+        put("durationMs", Json.toJsonValue(durationMs))
+        put("positionMs", Json.toJsonValue(positionMs))
+        put("playing", playing)
+        put("source", source)
+        put("updatedAt", updatedAtMs)
+        put("rawTexts", JSONArray(rawTexts))
+        put("extras", Json.toJsonValue(extras))
+    }
+
     private fun outputTypeName(type: Int): String = when (type) {
         AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "builtin_speaker"
         AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "builtin_earpiece"
@@ -140,5 +196,7 @@ class SnapshotWriter(
         put("playedMs", playedMs)
         put("mediaId", Json.toJsonValue(mediaId))
         put("metadataKeys", JSONArray(metadataKeys))
+        put("source", source)
+        put("volumeSource", volumeSource)
     }
 }

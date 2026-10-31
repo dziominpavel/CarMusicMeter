@@ -19,22 +19,28 @@
 | `MediaWatchService` | foreground-служба: цикл опроса, запись событий, уведомление |
 | `NotificationWatchService` | доступ к уведомлениям; текст медиа-уведомлений как резервный источник |
 | `MediaSessionProbe` | чтение `MediaSessionManager`, снимок сессии, полный JSON-дамп |
-| `SnapshotPicker` | выбор сессии «сейчас играет» из нескольких активных |
+| `StockPlayerBridge` | последнее состояние штатного плеера Teyes вне MediaSession |
+| `StockPlayerAccessibilityService` | необязательное чтение текста открытого окна плеера |
+| `TeyesToolkitClient` | binder-клиент `com.syu.ms`, реальная громкость MCU |
+| `SourcePicker` | выбор источника «сейчас играет»: MediaSession или штатный плеер |
 | `ListeningTracker` | чистая логика: границы трека, пропуск, пауза, перемотка |
 | `EventLog` | JSONL с fsync, снимки, ZIP-экспорт |
 | `ListeningRepository` | `StateFlow` для экрана, счётчики за день |
-| `SnapshotWriter` | окружение, громкость, аудиовыходы, все сессии, уведомления |
+| `SnapshotWriter` | окружение, громкость, аудиовыходы, все сессии, уведомления, `stockPlayer`, `teyes`, пакеты |
+| `AutostartScheduler` / `AutostartJobService` | persisted JobScheduler и страховка автозапуска |
+| `AutostartActivity` | невидимый пункт для списка автозапуска Teyes |
 | `ProbeScreen` | экран диагностики и кнопки |
 
 ## Поток данных
 
 ```
-MediaSessionManager ─┐
-                     ├─► MediaSessionProbe ─► SnapshotPicker ─► ListeningTracker
-AudioManager ────────┘                                             │
-                                                                  ▼
+MediaSessionManager ──► MediaSessionProbe ─┐
+titlesReceiver ───────► StockPlayerBridge ─┼─► SourcePicker ─► ListeningTracker
+accessibility ────────► StockPlayerBridge ─┤                         │
+уведомление ──────────► StockPlayerBridge ─┘                         ▼
 NotificationListener ─► NotificationCache ─────────────────► EventLog (JSONL)
-                                                                  │
+Teyes MCU ────────────► TeyesToolkitClient ─┐                       │
+AudioManager ───────────────────────────────┴─► VolumeSelector      │
                                                         «Экспорт логов» (SAF)
                                                                   ▼
                                                               ZIP на флешку
@@ -42,8 +48,9 @@ NotificationListener ─► NotificationCache ───────────�
 
 ### Цикл службы
 
-- каждые **500 мс** читается громкость `STREAM_MUSIC`;
-- каждые **1000 мс** запрашиваются активные сессии;
+- каждые **500 мс** читается громкость: сначала MCU Teyes, иначе `STREAM_MUSIC`;
+- каждые **1000 мс** запрашиваются активные сессии и последнее состояние штатного плеера;
+- раз в **5 с** MCU перечитывается, если вендорный callback молчит;
 - при играющем треке цикл идёт раз в 500 мс, в простое — раз в 1000 мс;
 - каждое изменение превращается в событие и сразу пишется на диск.
 
@@ -57,13 +64,15 @@ NotificationListener ─► NotificationCache ───────────�
 
 | Тип | Когда | Ключевые поля |
 |---|---|---|
-| `track_started` | появился новый трек | `trackKey`, `package`, `title`, `artist`, `album`, `mediaId`, `durationMs`, `positionMs`, `volume`, `actions`, `metadataKeys` |
-| `track_ended` | трек сменился/пропал/служба остановилась | `playedMs`, `endPositionMs`, `endReason`, `completed`, `volumeStart/End/Low/High`, `volumeChanges`, `nextTitle` |
-| `playback_paused` / `playback_resumed` / `playback_stopped` | смена состояния | `trackKey`, `positionMs`, `playedMs` |
+| `track_started` | появился новый трек | `trackKey`, `package`, `source`, `title`, `artist`, `album`, `mediaId`, `durationMs`, `positionMs`, `volume`, `volumeSource`, `actions`, `metadataKeys` |
+| `track_ended` | трек сменился/пропал/служба остановилась | `playedMs`, `endPositionMs`, `endReason`, `completed`, `volumeStart/End/Low/High`, `volumeChanges`, `volumeSource`, `nextTitle` |
+| `playback_paused` / `playback_resumed` / `playback_stopped` | смена состояния | `trackKey`, `source`, `positionMs`, `playedMs` |
 | `seek` | позиция скакнула больше чем на 5 с | `fromMs`, `toMs`, `deltaMs` |
-| `volume_changed` | изменилась громкость | `previous`, `value`, `max`, `delta`, `level`, `trackKey` |
-| `notification` | уведомление | `package`, `title`, `text`, `bigText`, `actions`, `hasMediaSession`, `mediaLike` |
-| `service_started` | служба запущена | `source` (`manual`, `boot`, `notification`) |
+| `volume_changed` | изменилась громкость | `previous`, `value`, `max`, `delta`, `level`, `source` (`mcu`/`audio`), `muted`, `trackKey` |
+| `notification` | уведомление | `package`, `title`, `text`, `bigText`, `actions`, `hasMediaSession`, `mediaLike`, `extras`, `remoteTexts` |
+| `stock_player_text` | изменился текст штатного плеера | `package`, `title`, `artist`, `source`, `playing`, `rawTexts` |
+| `teyes_toolkit` | изменилось состояние MCU-сервиса | `available`, `connected`, `module`, `volume`, `muted`, `error` |
+| `service_started` | служба запущена | `source` (`manual`, `boot`, `job`, `media_mounted`, `app_open`, `teyes_autostart`, `accessibility`, `notification`) |
 | `app_crash` | необработанное исключение | `message`, `exception`, `file` |
 | `boot_received` | получен boot-интент | `action` |
 | `service_start_failed` | не удалось стартовать foreground-службу | `error`, `source` |
@@ -78,13 +87,53 @@ NotificationListener ─► NotificationCache ───────────�
 - `session_lost` — сессия исчезла дольше чем на 5 с;
 - `service_stopped` — службу остановили.
 
+## Штатный плеер Teyes и источники
+
+`com.yf.teyesspotify` не публикует MediaSession, поэтому используются четыре
+канала в порядке приоритета:
+
+1. `MediaSession` — основной источник для Яндекс.Музыки и совместимых плееров.
+2. `titlesReceiver` — broadcast лаунчера FYT с `title`, `play_artist`,
+   `play_album`, `play_path`, `play_state`, `play_total`, `play_cur`.
+   Приёмник регистрируется динамически в работающей службе.
+3. Accessibility — необязательное чтение текста открытого окна
+   `com.yf.teyesspotify`/`com.syu.music`. Только чтение, без кликов; сырые
+   тексты сохраняются, потому что эвристика «первый текст — название» может
+   ошибаться.
+4. Уведомление — extras и текст `RemoteViews`, если плеер их публикует.
+
+`SourcePicker` выбирает играющий источник; при равенстве приоритет у
+MediaSession. Каждый трек помечается `source`, поэтому в отчёте можно
+отделить данные MediaSession от данных лаунчера/интерфейса.
+
+Громкость: `TeyesToolkitClient` подключается к `com.syu.ms/app.ToolkitService`
+и читает модуль `sound` (`U_VOL`, `U_MUTE`). Это реальная громкость панели.
+Если сервис недоступен, используется `AudioManager`. Максимум MCU не
+документирован, поэтому `max`/`level` могут быть `null`; подставлять 25 от
+Android нельзя.
+
+## Автозапуск
+
+Слои идут от самого надёжного к страховочному:
+
+- `BOOT_COMPLETED`, `MY_PACKAGE_REPLACED`, `QUICKBOOT_POWERON`, `MEDIA_MOUNTED`;
+- persisted `JobScheduler` (`AutostartJobService`) после загрузки;
+- `NotificationListenerService`, который система поднимает при уведомлениях;
+- открытие приложения (`MainActivity.onResume`);
+- невидимая `AutostartActivity` для `Настройки → Общие → Автомат. включ.
+  при запуске` и `Настройки → Пользователь → Настройки приложений` Teyes.
+
+Каждый слой пишет `service_started` со своим `source`, поэтому по ZIP видно,
+что именно сработало. Whitelist Teyes всё равно может требоваться — это
+ограничение прошивки, а не приложения.
+
 ## Хранение и экспорт
 
 - `files/logs/` — дневные JSONL-файлы; `files/snapshots/` — JSON-снимки;
   crash-файлы лежат рядом с журналом.
 - Снимок содержит `volume` для `STREAM_MUSIC`, `volumes` для всех потоков,
-  `isVolumeFixed`, `audioMode`, `isMusicActive` и последние уведомления с
-  `mediaLike`.
+  `isVolumeFixed`, `audioMode`, `isMusicActive`, `stockPlayer`, `teyes`,
+  `packages` и последние уведомления с `mediaLike`.
 - `EventLog.trimOld(policy)` при старте (и после смены настроек) удаляет
   завершённые дни старше настроенного срока, а при превышении лимита объёма
   (по умолчанию 500 МБ) — самые старые завершённые дни. Текущий день защищён.

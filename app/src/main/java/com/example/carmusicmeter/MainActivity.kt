@@ -31,9 +31,11 @@ import com.example.carmusicmeter.data.ExportRange
 import com.example.carmusicmeter.data.ExportStorage
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.Prefs
+import com.example.carmusicmeter.autostart.AutostartScheduler
 import com.example.carmusicmeter.data.StorageStats
 import com.example.carmusicmeter.diagnostics.SnapshotWriter
 import com.example.carmusicmeter.probe.MediaSessionProbe
+import com.example.carmusicmeter.service.AccessibilityAccess
 import com.example.carmusicmeter.service.NotificationAccess
 import com.example.carmusicmeter.service.StartSource
 import com.example.carmusicmeter.service.WatchServiceController
@@ -67,6 +69,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         prefs = (application as CarMusicMeterApp).prefs
+        if (prefs.autoStart && !ListeningRepository.state.value.serviceRunning) {
+            runCatching {
+                WatchServiceController.start(this, StartSource.APP_OPEN)
+            }
+        }
 
         setContent {
             CarMusicMeterTheme {
@@ -123,6 +130,12 @@ class MainActivity : ComponentActivity() {
                     onAutoStartChange = { enabled ->
                         autoStart = enabled
                         prefs.autoStart = enabled
+                        AutostartScheduler.sync(this@MainActivity, enabled)
+                        if (enabled && !state.serviceRunning) {
+                            runCatching {
+                                WatchServiceController.start(this@MainActivity, StartSource.APP_OPEN)
+                            }
+                        }
                         toast(if (enabled) "Автозапуск включён" else "Автозапуск выключен")
                     },
                     onRetentionChange = { days ->
@@ -159,6 +172,11 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onOpenBatterySettings = { openBatterySettings() },
+                    onOpenAccessibilitySettings = {
+                        if (!AccessibilityAccess.openSettings(this@MainActivity)) {
+                            toast("Открой Настройки → Спецдоступ → Спецвозможности")
+                        }
+                    },
                     onSnapshot = { takeSnapshot() },
                     onExport = { showExportDialog = true },
                 )

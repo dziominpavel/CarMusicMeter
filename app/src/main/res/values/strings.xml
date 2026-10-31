@@ -5,4 +5,7 @@
     <string name="channel_watch_description">Тихая служба: что играет и как меняется громкость</string>
     <string name="notif_title">CarMusicMeter</string>
     <string name="notif_text_idle">Ожидание музыки</string>
+    <string name="accessibility_label">CarMusicMeter: штатный плеер</string>
+    <string name="accessibility_description">Читает название и исполнителя в открытом окне штатного плеера Teyes. Ничего не нажимает и не меняет.</string>
+    <string name="autostart_app_name">CarMusicMeter (автозапуск)</string>
 </resources>
