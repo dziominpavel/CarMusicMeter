@@ -15,6 +15,31 @@ class Prefs(context: Context) {
             prefs.edit { putBoolean(KEY_AUTO_START, value) }
         }
 
+    /** 0 — хранить журнал бессрочно. */
+    var retentionDays: Int
+        get() = prefs.getInt(KEY_RETENTION_DAYS, 0)
+        set(value) {
+            prefs.edit { putInt(KEY_RETENTION_DAYS, value) }
+        }
+
+    /** 0 — без лимита объёма. */
+    var maxBytes: Long
+        get() = prefs.getLong(KEY_MAX_BYTES, StoragePolicy.DEFAULT_MAX_BYTES)
+        set(value) {
+            prefs.edit { putLong(KEY_MAX_BYTES, value) }
+        }
+
+    var exportRange: ExportRange
+        get() = ExportRange.fromTag(prefs.getString(KEY_EXPORT_RANGE, null))
+        set(value) {
+            prefs.edit { putString(KEY_EXPORT_RANGE, value.tag) }
+        }
+
+    fun storagePolicy(): StoragePolicy = StoragePolicy(
+        retentionDays = retentionDays,
+        maxBytes = maxBytes,
+    )
+
     /**
      * Идентификатор устройства для `manifest.json`. Создаётся один раз;
      * сбрасывается только при очистке данных приложения.
@@ -37,5 +62,8 @@ class Prefs(context: Context) {
         const val KEY_AUTO_START = "auto_start"
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_EXPORT_SEQ = "export_seq"
+        const val KEY_RETENTION_DAYS = "retention_days"
+        const val KEY_MAX_BYTES = "max_bytes"
+        const val KEY_EXPORT_RANGE = "export_range"
     }
 }

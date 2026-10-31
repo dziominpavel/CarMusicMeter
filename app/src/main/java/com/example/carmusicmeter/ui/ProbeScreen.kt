@@ -24,6 +24,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -43,13 +44,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.carmusicmeter.AppVersion
 import com.example.carmusicmeter.BuildConfig
+import com.example.carmusicmeter.data.ExportRange
 import com.example.carmusicmeter.data.LiveState
 import com.example.carmusicmeter.data.LiveTrack
 import com.example.carmusicmeter.data.LogEvent
 import com.example.carmusicmeter.data.MediaPhase
+import com.example.carmusicmeter.data.StorageStats
 import com.example.carmusicmeter.ui.theme.AccentContainer
 import com.example.carmusicmeter.ui.theme.StatusOk
 import com.example.carmusicmeter.ui.theme.StatusWarn
+import java.util.Locale
 
 private val CardShape = RoundedCornerShape(20.dp)
 
@@ -57,7 +61,12 @@ private val CardShape = RoundedCornerShape(20.dp)
 fun ProbeScreen(
     state: LiveState,
     autoStart: Boolean,
+    storageStats: StorageStats?,
+    retentionDays: Int,
+    exportRange: ExportRange,
     onAutoStartChange: (Boolean) -> Unit,
+    onRetentionChange: (Int) -> Unit,
+    onExportRangeChange: (ExportRange) -> Unit,
     onStartService: () -> Unit,
     onStopService: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
@@ -102,6 +111,13 @@ fun ProbeScreen(
             }
         }
         StatsRow(state)
+        DataCard(
+            stats = storageStats,
+            retentionDays = retentionDays,
+            exportRange = exportRange,
+            onRetentionChange = onRetentionChange,
+            onExportRangeChange = onExportRangeChange,
+        )
         AutoStartCard(autoStart = autoStart, onAutoStartChange = onAutoStartChange)
         RecentEventsCard(state)
         HintCard()
@@ -384,6 +400,108 @@ private fun StatTile(label: String, value: String, modifier: Modifier = Modifier
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+@Composable
+private fun DataCard(
+    stats: StorageStats?,
+    retentionDays: Int,
+    exportRange: ExportRange,
+    onRetentionChange: (Int) -> Unit,
+    onExportRangeChange: (ExportRange) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "Данные",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (stats == null) {
+                Text("Считаю…", style = MaterialTheme.typography.bodyMedium)
+            } else {
+                Text(
+                    text = stats.oldestLogDate?.let { "Журнал с $it" } ?: "Журнала пока нет",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "Журнал: ${stats.logFiles} файлов · ${formatBytes(stats.logBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Снимки: ${stats.snapshotFiles} · ${formatBytes(stats.snapshotBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                text = "Срок хранения",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = retentionDays == 0,
+                    onClick = { onRetentionChange(0) },
+                    label = { Text("Бессрочно") },
+                )
+                FilterChip(
+                    selected = retentionDays == 365,
+                    onClick = { onRetentionChange(365) },
+                    label = { Text("1 год") },
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = retentionDays == 180,
+                    onClick = { onRetentionChange(180) },
+                    label = { Text("180 дней") },
+                )
+                FilterChip(
+                    selected = retentionDays == 90,
+                    onClick = { onRetentionChange(90) },
+                    label = { Text("90 дней") },
+                )
+            }
+            Text(
+                text = "Период экспорта",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = exportRange == ExportRange.ALL,
+                    onClick = { onExportRangeChange(ExportRange.ALL) },
+                    label = { Text(ExportRange.ALL.label) },
+                )
+                FilterChip(
+                    selected = exportRange == ExportRange.DAYS_90,
+                    onClick = { onExportRangeChange(ExportRange.DAYS_90) },
+                    label = { Text(ExportRange.DAYS_90.label) },
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = exportRange == ExportRange.DAYS_30,
+                    onClick = { onExportRangeChange(ExportRange.DAYS_30) },
+                    label = { Text(ExportRange.DAYS_30.label) },
+                )
+                FilterChip(
+                    selected = exportRange == ExportRange.DAYS_7,
+                    onClick = { onExportRangeChange(ExportRange.DAYS_7) },
+                    label = { Text(ExportRange.DAYS_7.label) },
+                )
+            }
         }
     }
 }

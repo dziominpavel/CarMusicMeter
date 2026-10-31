@@ -39,30 +39,49 @@ object ExportManifest {
         info: ExportInfo,
         files: List<ExportFile>,
         exportedAtMs: Long,
-    ): Map<String, Any?> = linkedMapOf(
-        "kind" to "carmusicmeter-export",
-        "schemaVersion" to SCHEMA_VERSION,
-        "deviceId" to info.deviceId,
-        "exportSeq" to info.exportSeq,
-        "exportedAt" to isoTime(exportedAtMs),
-        "exportedAtMs" to exportedAtMs,
-        "appVersion" to info.appVersion,
-        "versionCode" to info.versionCode,
-        "device" to linkedMapOf(
-            "manufacturer" to info.manufacturer,
-            "model" to info.model,
-            "android" to info.androidRelease,
-            "sdk" to info.sdkInt,
-        ),
-        "files" to files.map { file ->
+        range: ExportRangeInfo? = null,
+        coverage: ExportCoverage? = null,
+    ): Map<String, Any?> {
+        val manifest = linkedMapOf<String, Any?>(
+            "kind" to "carmusicmeter-export",
+            "schemaVersion" to SCHEMA_VERSION,
+            "deviceId" to info.deviceId,
+            "exportSeq" to info.exportSeq,
+            "exportedAt" to isoTime(exportedAtMs),
+            "exportedAtMs" to exportedAtMs,
+            "appVersion" to info.appVersion,
+            "versionCode" to info.versionCode,
+            "device" to linkedMapOf(
+                "manufacturer" to info.manufacturer,
+                "model" to info.model,
+                "android" to info.androidRelease,
+                "sdk" to info.sdkInt,
+            ),
+        )
+        if (range != null) {
+            manifest["range"] = linkedMapOf(
+                "mode" to range.mode,
+                "days" to range.days,
+                "fromMs" to range.fromMs,
+                "toMs" to range.toMs,
+            )
+        }
+        if (coverage != null) {
+            manifest["coverage"] = linkedMapOf(
+                "fromMs" to coverage.fromMs,
+                "toMs" to coverage.toMs,
+            )
+        }
+        manifest["files"] = files.map { file ->
             linkedMapOf(
                 "path" to file.path,
                 "size" to file.size,
                 "sha256" to file.sha256,
             )
-        },
-        "totalBytes" to files.sumOf { it.size },
-    )
+        }
+        manifest["totalBytes"] = files.sumOf { it.size }
+        return manifest
+    }
 
     /** Локальное время с явным смещением: `2026-10-31T18:30:00.123+03:00`. */
     fun isoTime(ms: Long): String = Instant.ofEpochMilli(ms)

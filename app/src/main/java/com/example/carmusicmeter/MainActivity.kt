@@ -26,14 +26,19 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import com.example.carmusicmeter.data.ExportInfo
+import com.example.carmusicmeter.data.ExportPlan
+import com.example.carmusicmeter.data.ExportRange
 import com.example.carmusicmeter.data.ExportStorage
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.Prefs
+import com.example.carmusicmeter.data.StorageStats
 import com.example.carmusicmeter.diagnostics.SnapshotWriter
 import com.example.carmusicmeter.probe.MediaSessionProbe
 import com.example.carmusicmeter.service.NotificationAccess
 import com.example.carmusicmeter.service.StartSource
 import com.example.carmusicmeter.service.WatchServiceController
+import com.example.carmusicmeter.ui.ExportDialog
+import com.example.carmusicmeter.ui.ExportProgressDialog
 import com.example.carmusicmeter.ui.ExportResult
 import com.example.carmusicmeter.ui.ExportResultDialog
 import com.example.carmusicmeter.ui.ProbeScreen
@@ -49,6 +54,14 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var prefs: Prefs
     private val exportResult = mutableStateOf<ExportResult?>(null)
+    private val exportBusy = mutableStateOf(false)
+    private val storageStats = mutableStateOf<StorageStats?>(null)
+    private var pendingExport: PendingExport? = null
+
+    private data class PendingExport(
+        val fileName: String,
+        val plan: ExportPlan,
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,12 +71,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             CarMusicMeterTheme {
                 val state by ListeningRepository.state.collectAsState()
+                val app = application as CarMusicMeterApp
+                val busy by exportBusy
+                val stats = storageStats.value
                 var autoStart by remember { mutableStateOf(prefs.autoStart) }
+                var retentionDays by remember { mutableStateOf(prefs.retentionDays) }
+                var exportRange by remember { mutableStateOf(prefs.exportRange) }
+                var showExportDialog by remember { mutableStateOf(false) }
+                var exportPlan by remember { mutableStateOf<ExportPlan?>(null) }
 
                 val exportLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument("application/zip"),
                 ) { uri ->
-                    if (uri != null) exportLogs(uri)
+                    if (uri != null) {
+                        exportLogs(uri)
+                    } else {
+                        pendingExport = null
+                        exportBusy.value = false
+                    }
                 }
                 val notificationPermissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission(),
@@ -78,15 +103,42 @@ class MainActivity : ComponentActivity() {
                     ) {
                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                     }
+                    refreshStorageStats()
+                }
+
+                LaunchedEffect(showExportDialog, exportRange) {
+                    if (showExportDialog) {
+                        exportPlan = withContext(Dispatchers.IO) {
+                            app.eventLog.planExport(exportRange)
+                        }
+                    }
                 }
 
                 ProbeScreen(
                     state = state,
                     autoStart = autoStart,
+                    storageStats = stats,
+                    retentionDays = retentionDays,
+                    exportRange = exportRange,
                     onAutoStartChange = { enabled ->
                         autoStart = enabled
                         prefs.autoStart = enabled
                         toast(if (enabled) "Автозапуск включён" else "Автозапуск выключен")
+                    },
+                    onRetentionChange = { days ->
+                        retentionDays = days
+                        prefs.retentionDays = days
+                        lifecycleScope.launch {
+                            withContext(Dispatchers.IO) {
+                                app.eventLog.trimOld(prefs.storagePolicy())
+                            }
+                            refreshStorageStats()
+                        }
+                        toast("Срок хранения: ${retentionLabel(days)}")
+                    },
+                    onExportRangeChange = { range ->
+                        exportRange = range
+                        prefs.exportRange = range
                     },
                     onStartService = {
                         runCatching {
@@ -108,18 +160,45 @@ class MainActivity : ComponentActivity() {
                     },
                     onOpenBatterySettings = { openBatterySettings() },
                     onSnapshot = { takeSnapshot() },
-                    onExport = {
-                        val name = exportFileName()
-                        runCatching { exportLauncher.launch(name) }
-                            .onFailure { error ->
-                                if (error is ActivityNotFoundException) {
-                                    exportToDownloads(name)
-                                } else {
-                                    toast("Не удалось открыть сохранение: ${error.message}")
-                                }
-                            }
-                    },
+                    onExport = { showExportDialog = true },
                 )
+
+                if (showExportDialog) {
+                    ExportDialog(
+                        range = exportRange,
+                        plan = exportPlan,
+                        onRangeChange = { range ->
+                            if (range != exportRange) {
+                                exportRange = range
+                                prefs.exportRange = range
+                                exportPlan = null
+                            }
+                        },
+                        onConfirm = {
+                            val plan = exportPlan
+                            if (plan == null || plan.isEmpty) {
+                                toast("Нет данных за период")
+                            } else {
+                                showExportDialog = false
+                                val name = exportFileName(plan.range)
+                                pendingExport = PendingExport(name, plan)
+                                runCatching { exportLauncher.launch(name) }
+                                    .onFailure { error ->
+                                        if (error is ActivityNotFoundException) {
+                                            exportToDownloads(name)
+                                        } else {
+                                            pendingExport = null
+                                            toast("Не удалось открыть сохранение: ${error.message}")
+                                        }
+                                    }
+                            }
+                        },
+                        onDismiss = { showExportDialog = false },
+                    )
+                }
+                if (busy) {
+                    ExportProgressDialog()
+                }
                 exportResult.value?.let { result ->
                     ExportResultDialog(
                         result = result,
@@ -134,6 +213,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshEnvironment()
+        refreshStorageStats()
     }
 
     private fun refreshEnvironment() {
@@ -178,18 +258,26 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
-            result.onSuccess { toast("Снимок: ${it.name}") }
-                .onFailure { toast("Ошибка снимка: ${it.message}") }
+            result.onSuccess {
+                toast("Снимок: ${it.name}")
+                refreshStorageStats()
+            }.onFailure { toast("Ошибка снимка: ${it.message}") }
         }
     }
 
     private fun exportLogs(uri: Uri) {
+        val pending = pendingExport ?: return
+        exportBusy.value = true
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { exportTo(uri) }
+                runCatching { exportTo(uri, pending.plan) }
             }
-            result.onSuccess { count -> toast("Экспортировано файлов: $count") }
-                .onFailure { toast("Ошибка экспорта: ${it.message}") }
+            result.onSuccess { count ->
+                pendingExport = null
+                toast("Экспортировано файлов: $count")
+                refreshStorageStats()
+            }.onFailure { toast("Ошибка экспорта: ${it.message}") }
+            exportBusy.value = false
         }
     }
 
@@ -198,12 +286,14 @@ class MainActivity : ComponentActivity() {
      * в «Загрузки» через MediaStore, без разрешения на запись.
      */
     private fun exportToDownloads(fileName: String) {
+        val pending = pendingExport ?: return
+        exportBusy.value = true
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val uri = ExportStorage.createDownloadsZip(contentResolver, fileName)
                     try {
-                        val count = exportTo(uri)
+                        val count = exportTo(uri, pending.plan)
                         ExportStorage.publish(contentResolver, uri)
                         count to uri
                     } catch (t: Throwable) {
@@ -213,22 +303,27 @@ class MainActivity : ComponentActivity() {
                 }
             }
             result.onSuccess { (count, uri) ->
+                pendingExport = null
+                exportBusy.value = false
                 exportResult.value = ExportResult(
                     fileName = fileName,
                     location = ExportStorage.displayPath(fileName),
                     uri = uri,
                 )
                 toast("Экспортировано файлов: $count")
+                refreshStorageStats()
             }.onFailure { toast("Ошибка экспорта: ${it.message}") }
+            exportBusy.value = false
         }
     }
 
-    private fun exportTo(uri: Uri): Int {
+    private fun exportTo(uri: Uri, plan: ExportPlan): Int {
         val app = application as CarMusicMeterApp
         return app.eventLog.exportTo(
             resolver = contentResolver,
             uri = uri,
             info = exportInfo(),
+            plan = plan,
         )
     }
 
@@ -246,10 +341,24 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun exportFileName(): String {
+    private fun exportFileName(range: ExportRange): String {
         val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
         val device = prefs.deviceId.take(8)
-        return "CarMusicMeter-$device-logs-$stamp.zip"
+        return "CarMusicMeter-$device-${range.tag}-$stamp.zip"
+    }
+
+    private fun refreshStorageStats() {
+        lifecycleScope.launch {
+            storageStats.value = withContext(Dispatchers.IO) {
+                (application as CarMusicMeterApp).eventLog.storageStats()
+            }
+        }
+    }
+
+    private fun retentionLabel(days: Int): String = when (days) {
+        0 -> "бессрочно"
+        365 -> "1 год"
+        else -> "$days дней"
     }
 
     private fun shareExport(uri: Uri) {

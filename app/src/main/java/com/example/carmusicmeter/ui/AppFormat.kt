@@ -21,6 +21,12 @@ fun formatMs(ms: Long?): String {
 fun formatClock(ts: Long): String =
     SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(ts))
 
+fun formatBytes(bytes: Long): String = when {
+    bytes >= 1024L * 1024L -> "%.1f МБ".format(Locale.US, bytes / 1024.0 / 1024.0)
+    bytes >= 1024L -> "%.0f КБ".format(Locale.US, bytes / 1024.0)
+    else -> "$bytes Б"
+}
+
 fun reasonLabel(reason: Any?): String = when (reason?.toString()) {
     "completed" -> "дослушан"
     "skipped" -> "пропущен"

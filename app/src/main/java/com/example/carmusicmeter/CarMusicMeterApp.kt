@@ -23,7 +23,7 @@ class CarMusicMeterApp : Application() {
         CrashLogger.install(eventLog)
         ListeningRepository.attach(eventLog)
         createNotificationChannel()
-        eventLog.trimOld()
+        eventLog.trimOld(prefs.storagePolicy())
     }
 
     private fun createNotificationChannel() {

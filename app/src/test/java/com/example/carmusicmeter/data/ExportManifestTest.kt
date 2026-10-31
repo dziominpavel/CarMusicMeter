@@ -63,6 +63,27 @@ class ExportManifestTest {
     }
 
     @Test
+    fun `манифест содержит диапазон и фактические даты`() {
+        val manifest = ExportManifest.build(
+            info = info,
+            files = emptyList(),
+            exportedAtMs = EXPORTED_AT_MS,
+            range = ExportRangeInfo("days", 30, 100, 200),
+            coverage = ExportCoverage(10, 20),
+        )
+
+        val range = manifest["range"] as Map<*, *>
+        assertEquals("days", range["mode"])
+        assertEquals(30, range["days"])
+        assertEquals(100L, range["fromMs"])
+        assertEquals(200L, range["toMs"])
+
+        val coverage = manifest["coverage"] as Map<*, *>
+        assertEquals(10L, coverage["fromMs"])
+        assertEquals(20L, coverage["toMs"])
+    }
+
+    @Test
     fun `пустой экспорт остаётся валидным`() {
         val manifest = ExportManifest.build(info, emptyList(), EXPORTED_AT_MS)
 

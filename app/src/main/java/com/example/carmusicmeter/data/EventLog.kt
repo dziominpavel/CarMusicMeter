@@ -68,8 +68,73 @@ class EventLog(baseDir: File) {
         return file
     }
 
+    fun storageStats(): StorageStats {
+        val logs = scanLogs()
+        val snapshots = scanSnapshots()
+        val crashes = scanCrashes()
+        return StorageStats(
+            oldestLogDate = logs.mapNotNull { it.date }.minOrNull(),
+            logFiles = logs.size,
+            logBytes = logs.sumOf { it.size },
+            snapshotFiles = snapshots.size,
+            snapshotBytes = snapshots.sumOf { it.size },
+            crashFiles = crashes.size,
+            crashBytes = crashes.sumOf { it.size },
+        )
+    }
+
     /**
-     * Упаковать журнал и снимки в ZIP, выбранный пользователем через SAF.
+     * Чистка по политике: журнал — по дате из имени и лимиту объёма,
+     * снимки и crash-файлы — по количеству. Текущий день не удаляется.
+     */
+    fun trimOld(
+        policy: StoragePolicy = StoragePolicy.DEFAULT,
+        nowMs: Long = System.currentTimeMillis(),
+    ): RetentionPlan {
+        val today = StorageDates.dateOf(nowMs)
+        val plan = RetentionPlanner.plan(
+            logs = scanLogs(),
+            snapshots = scanSnapshots(),
+            crashes = scanCrashes(),
+            policy = policy,
+            today = today,
+        )
+        val deleted = plan.all.filter { it.file.delete() }
+        if (deleted.isNotEmpty()) {
+            val reasons = plan.reasons().joinToString("+").ifBlank { "policy" }
+            val deletedFiles = deleted.mapTo(HashSet()) { it.file }
+            runCatching {
+                append(
+                    LogEvent(
+                        ts = nowMs,
+                        type = "retention_trimmed",
+                        fields = linkedMapOf(
+                            "files" to deleted.size,
+                            "bytes" to deleted.sumOf { it.size },
+                            "logs" to plan.logs.count { it.file in deletedFiles },
+                            "snapshots" to plan.snapshots.count { it.file in deletedFiles },
+                            "crashes" to plan.crashes.count { it.file in deletedFiles },
+                            "reason" to reasons,
+                        ),
+                    ),
+                )
+            }
+        }
+        return plan
+    }
+
+    fun planExport(
+        range: ExportRange,
+        nowMs: Long = System.currentTimeMillis(),
+    ): ExportPlan = ExportPlanner.plan(
+        files = scanLogs() + scanSnapshots() + scanCrashes(),
+        range = range,
+        today = StorageDates.dateOf(nowMs),
+        nowMs = nowMs,
+    )
+
+    /**
+     * Упаковать выбранные файлы в ZIP, выбранный пользователем через SAF.
      *
      * Контрольные суммы считаются по ходу копирования, без второго прохода
      * по файлам: на магнитоле дорога каждая секунда чтения флешки.
@@ -78,19 +143,18 @@ class EventLog(baseDir: File) {
         resolver: ContentResolver,
         uri: Uri,
         info: ExportInfo,
+        plan: ExportPlan,
+        exportedAtMs: Long = System.currentTimeMillis(),
     ): Int {
-        val files = buildList {
-            logsDir.listFiles()?.sortedBy { it.name }?.let { addAll(it) }
-            snapshotsDir.listFiles()?.sortedBy { it.name }?.let { addAll(it) }
-        }
-        val entries = ArrayList<ExportFile>(files.size)
+        if (plan.files.isEmpty()) error("нет данных за период")
+        val entries = ArrayList<ExportFile>(plan.files.size)
         val stream = resolver.openOutputStream(uri)
             ?: error("не удалось открыть поток для записи")
         stream.use { output ->
             ZipOutputStream(BufferedOutputStream(output)).use { zip ->
-                files.forEach { file ->
-                    val dir = if (file.parentFile == logsDir) "logs" else "snapshots"
-                    val path = "$dir/${file.name}"
+                plan.files.forEach { stored ->
+                    val file = stored.file
+                    val path = "${stored.kind.dir}/${file.name}"
                     val digest = MessageDigest.getInstance("SHA-256")
                     var size = 0L
                     zip.putNextEntry(ZipEntry(path))
@@ -107,27 +171,56 @@ class EventLog(baseDir: File) {
                     entries += ExportFile(path, size, digest.digest().toHex())
                 }
                 val manifest = Json.objectFrom(
-                    ExportManifest.build(info, entries, System.currentTimeMillis()),
+                    ExportManifest.build(
+                        info = info,
+                        files = entries,
+                        exportedAtMs = exportedAtMs,
+                        range = plan.rangeInfo(),
+                        coverage = plan.coverage(),
+                    ),
                 )
                 zip.putNextEntry(ZipEntry("manifest.json"))
                 zip.write(manifest.toString(2).toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
             }
         }
-        return files.size
+        return plan.files.size
     }
 
-    /** Чистка старых файлов: журнал — 180 дней, снимки — последние 600 штук. */
-    fun trimOld(maxAgeDays: Int = 180, maxSnapshots: Int = 600) {
-        val cutoff = System.currentTimeMillis() - maxAgeDays * 24L * 60L * 60L * 1000L
-        logsDir.listFiles()?.forEach { file ->
-            if (file.lastModified() < cutoff) file.delete()
-        }
+    private fun scanLogs(): List<StoredFile> =
+        logsDir.listFiles()
+            ?.filterNot { it.name.startsWith("crash-") }
+            ?.map { file ->
+                StoredFile(
+                    file = file,
+                    kind = StoredKind.LOG,
+                    date = StorageDates.logDate(file.name),
+                )
+            }
+            .orEmpty()
+
+    private fun scanSnapshots(): List<StoredFile> =
         snapshotsDir.listFiles()
-            ?.sortedByDescending { it.lastModified() }
-            ?.drop(maxSnapshots)
-            ?.forEach { it.delete() }
-    }
+            ?.map { file ->
+                StoredFile(
+                    file = file,
+                    kind = StoredKind.SNAPSHOT,
+                    date = StorageDates.snapshotDate(file.name),
+                )
+            }
+            .orEmpty()
+
+    private fun scanCrashes(): List<StoredFile> =
+        logsDir.listFiles()
+            ?.filter { it.name.startsWith("crash-") }
+            ?.map { file ->
+                StoredFile(
+                    file = file,
+                    kind = StoredKind.CRASH,
+                    date = StorageDates.crashTime(file.name)?.let(StorageDates::dateOf),
+                )
+            }
+            .orEmpty()
 
     private fun dayStamp(ts: Long): String =
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(ts))
