@@ -24,9 +24,111 @@
       ZIP с магнитолы (pull). Решение и ограничения — `docs/SYNC.md`.
 - [x] Отчёт по ZIP на ПК: `scripts/report.py` — прогресс, скипы, громкость,
       кандидаты на удаление. Метрики и ограничения — `docs/METRICS.md`.
-- [ ] Настройка хранения (бессрочно, лимит 500 МБ) и диапазона экспорта
+- [x] Настройка хранения (бессрочно, лимит 500 МБ) и диапазона экспорта
       (вся история / 90 / 30 / 7 дней) — change
       `configurable-retention-and-export`.
+
+## v0.y — устойчивость и чистота данных (по итогам ревью 2026-11-01)
+
+Цель: пережить выключение зажигания без потери текущего трека и не
+загрязнять `skip rate` фантомными прослушиваниями. Пункты P0/P1 оформлены
+отдельными OpenSpec change (`reliable-capture` и `metric-hygiene`), а не
+добавлены в `teyes-integration`: тот change уже про источники Teyes и ждёт
+проверки в машине.
+
+Статус на 2026-11-01: P0 и P1 по данным/метрикам реализованы; остались
+проверка на телефоне, оптимизация снимка и выезд в машину.
+
+### P0 — до следующего выезда в машину
+
+- [ ] `MediaWatchService`: цикл не должен умирать от `IOException`/ошибки
+      записи. Обернуть тик в `try/catch`, писать `watch_loop_error` с
+      throttling, делать backoff и перезапускать цикл; показывать
+      `lastTickAt`/`storageError` на экране и в уведомлении.
+- [ ] Остановка службы: сначала `cancelAndJoin` цикла, потом
+      `tracker.finish()`. Сейчас `onDestroy` пишет финал параллельно с
+      `onTick` на `Dispatchers.Default` — возможны дубли и потеря событий.
+- [ ] `track_progress` раз в 60 секунд и на паузе/остановке: `trackKey`,
+      `positionMs`, `playedMs`, `volume`, `phase`. Научить `report.py`
+      использовать последний checkpoint для открытых прослушиваний.
+- [ ] Монотонное время для `playedMs`, позиции и grace-интервалов
+      (`SystemClock.elapsedRealtime()`); `System.currentTimeMillis()` —
+      только для `ts`. Ограничить дельту на тик, писать `clock_changed`.
+- [ ] Стабильный ключ трека: `package + (path/mediaId)`, иначе
+      нормализованные `title+artist`, без `duration`. При смене `source`
+      у того же трека обновлять snapshot, а не закрывать/открывать play.
+
+### P1 — чистота метрик (до первых выводов об удалении)
+
+- [ ] Не стартовать `track_started` на `PAUSED/STOPPED` до первого
+      `PLAYING`; для уже записанных коротких «прослушиваний» ввести
+      `endReason = not_played` (например, `playedMs < 3 с`) и не пускать
+      их в знаменатели `skip_rate`/`completion`.
+- [ ] `report.py`: считать `skip_rate` только по настоящим окончаниям
+      (`completed + skipped + interrupted`), а `service_stopped`,
+      `session_lost` и `not_played` показывать отдельно как censored.
+- [ ] Golden-тест `report.py` на синтетическом ZIP: 3 трека, скип,
+      completed, сброс позиции, дубли экспорта, битая строка.
+- [ ] Повтор одного трека: если при `PLAYING` позиция ушла к нулю, а
+      ожидалась близкая к концу — закрывать как `completed` и начинать
+      новый play (repeat-one сейчас выглядит как `seek`).
+- [ ] `StockPlayerBridge`: не терять паузу из-за `PAUSED_STALE_MS = 15 с`
+      и `SESSION_GRACE_MS = 5 с`; если `play_state` отсутствует —
+      использовать `isMusicActive`; `fromNotification` не должен всегда
+      считать трек играющим.
+- [ ] Mute не превращать в `volume = 0`: хранить сырое значение и флаг
+      `muted`, иначе `volumeLow/High`, `volumeChanges` и `volume_delta`
+      искажаются.
+- [ ] `NotificationListener`: не писать с fsync на main-потоке; не
+      логировать обновления прогресса в `text/subText`; кэшировать в
+      снимок только media-like/stock, а не все уведомления.
+- [ ] `Application.onCreate`: `todayCounts()` и `trimOld()` убрать с
+      main-потока; счётчики обновлять, когда IO закончится.
+
+### P1 — стоимость и приватность
+
+- [ ] `TeyesToolkitClient`: не делать повторный `bindService`, если
+      binding уже существует; корректно вести `bound/binding` и
+      освобождать его в `stop()`.
+- [ ] `accessibility_service_config.xml`: ограничить `packageNames`
+      двумя пакетами штатного плеера; на API < 33 не забывать `recycle()`
+      для `AccessibilityNodeInfo`.
+- [ ] `probe.hasNotificationAccess()` не вызывать каждый тик — кэшировать
+      на 10 секунд, как уже сделано для accessibility.
+- [ ] Снимок на старте трека не строить синхронно в цикле: вынести
+      `getInstalledPackages`, `getActiveSessions` и листинг файлов в
+      отдельную IO-корутину; список пакетов кэшировать.
+
+### P2 — гигиена и UX
+
+- [ ] Lint: заменить ветвление `registerReceiver` на
+      `ContextCompat.registerReceiver(..., RECEIVER_EXPORTED)`; добавить
+      `lintDebug` в проверку перед сборкой.
+- [ ] Добавить `checks.ps1` (unit tests + lint + `openspec validate --all`
+      + `check-version.py`) или GitHub Actions; сейчас `assembleRelease`
+      не запускает ни тесты, ни lint.
+- [ ] `MainActivity`: старт службы при `onResume`, а не только в
+      `onCreate`; писать `service_started(source=system_restart)` при
+      перезапуске `START_STICKY` с null intent.
+- [ ] Экран: чипы 38 dp → минимум 48 dp; смену срока хранения делать с
+      подтверждением и показом числа файлов/объёма, которые будут
+      удалены.
+- [ ] Экспорт не должен отменяться при пересоздании activity: вынести в
+      foreground-службу/application scope; проверить, что ZIP не остаётся
+      частичным.
+- [ ] Синхронизировать docs: `ROADMAP` (этот пункт про retention уже
+      сделан), `METRICS` (`volume_changes_per_min`, buffering),
+      `ARCHITECTURE` (1 с vs 2 с, `onResume`).
+
+### Критерии приёмки v0.y
+
+- [ ] `:app:testDebugUnitTest` и `:app:lintDebug` зелёные,
+      `openspec validate --all` проходит.
+- [ ] В машине пауза 30 секунд не рождает второй `track_started`, а
+      выключение зажигания в середине трека оставляет `track_progress`
+      и восстанавливаемый `playedMs`.
+- [ ] В свежем ZIP нет пар `track_ended(skipped) + track_started` для
+      одного и того же трека в пределах нескольких секунд.
 
 ## v1 — связка с коллекцией
 

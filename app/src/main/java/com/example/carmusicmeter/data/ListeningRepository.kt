@@ -27,6 +27,11 @@ data class LiveState(
     val tracksToday: Int = 0,
     val sessionsSeen: Int = 0,
     val recent: List<LogEvent> = emptyList(),
+    val lastTickAt: Long? = null,
+    val lastSuccessAt: Long? = null,
+    val captureError: String? = null,
+    val captureFailures: Int = 0,
+    val droppedEvents: Int = 0,
 )
 
 /**
@@ -57,6 +62,18 @@ object ListeningRepository {
 
     fun setBatteryUnrestricted(unrestricted: Boolean) {
         _state.update { it.copy(batteryUnrestricted = unrestricted) }
+    }
+
+    fun updateCaptureHealth(health: CaptureHealth) {
+        _state.update {
+            it.copy(
+                lastTickAt = health.lastTickAt,
+                lastSuccessAt = health.lastSuccessAt,
+                captureError = health.lastError,
+                captureFailures = health.consecutiveFailures,
+                droppedEvents = health.droppedEvents,
+            )
+        }
     }
 
     fun updateLive(

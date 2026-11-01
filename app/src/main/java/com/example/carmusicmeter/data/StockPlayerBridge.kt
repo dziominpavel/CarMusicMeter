@@ -10,8 +10,10 @@ data class StockPlayerState(
     val durationMs: Long? = null,
     val positionMs: Long? = null,
     val playing: Boolean = false,
+    val playingKnown: Boolean = true,
     val source: String,
     val updatedAtMs: Long,
+    val updatedAtMonoMs: Long = updatedAtMs,
     val rawTexts: List<String> = emptyList(),
     val extras: Map<String, String> = emptyMap(),
 ) {
@@ -26,15 +28,18 @@ data class StockPlayerState(
             playing,
         ).joinToString("|")
 
-    fun toSnapshot(nowMs: Long, isMusicActive: Boolean): MediaSnapshot? {
-        val effectivePlaying = playing ||
-            (source == StockPlayerSources.ACCESSIBILITY && isMusicActive)
-        val age = nowMs - updatedAtMs
+    fun toSnapshot(nowMonoMs: Long, isMusicActive: Boolean): MediaSnapshot? {
+        val effectivePlaying = when {
+            source == StockPlayerSources.ACCESSIBILITY -> playing || isMusicActive
+            source == StockPlayerSources.NOTIFICATION -> isMusicActive
+            source == StockPlayerSources.FYT_BROADCAST && !playingKnown -> isMusicActive
+            else -> playing
+        }
+        val age = (nowMonoMs - updatedAtMonoMs).coerceAtLeast(0L)
         val staleAfter = when {
             !effectivePlaying -> PAUSED_STALE_MS
-            source == StockPlayerSources.FYT_BROADCAST -> BROADCAST_STALE_MS
-            source == StockPlayerSources.NOTIFICATION -> BROADCAST_STALE_MS
-            else -> ACCESSIBILITY_STALE_MS
+            source == StockPlayerSources.ACCESSIBILITY -> ACCESSIBILITY_STALE_MS
+            else -> PLAYING_STALE_MS
         }
         if (age > staleAfter) return null
         if (title.isBlank()) return null
@@ -64,9 +69,9 @@ data class StockPlayerState(
     }
 
     private companion object {
-        const val BROADCAST_STALE_MS = 30_000L
+        const val PLAYING_STALE_MS = 30 * 60_000L
         const val ACCESSIBILITY_STALE_MS = 10 * 60_000L
-        const val PAUSED_STALE_MS = 15_000L
+        const val PAUSED_STALE_MS = 10 * 60_000L
     }
 }
 
@@ -88,12 +93,12 @@ object StockPlayerBridge {
     @Synchronized
     fun latest(): StockPlayerState? = current
 
-    fun snapshot(nowMs: Long, isMusicActive: Boolean): MediaSnapshot? =
-        current?.toSnapshot(nowMs, isMusicActive)
+    fun snapshot(nowMonoMs: Long, isMusicActive: Boolean): MediaSnapshot? =
+        current?.toSnapshot(nowMonoMs, isMusicActive)
 
     /** Последнее состояние, если оно ещё не устарело; иначе null. */
-    fun activeState(nowMs: Long, isMusicActive: Boolean): StockPlayerState? =
-        current?.takeIf { it.toSnapshot(nowMs, isMusicActive) != null }
+    fun activeState(nowMonoMs: Long, isMusicActive: Boolean): StockPlayerState? =
+        current?.takeIf { it.toSnapshot(nowMonoMs, isMusicActive) != null }
 
     /** @return true, если изменились название/исполнитель/состояние. */
     @Synchronized
@@ -101,13 +106,13 @@ object StockPlayerBridge {
         val old = current
         if (old != null && old.source == StockPlayerSources.FYT_BROADCAST &&
             state.source != StockPlayerSources.FYT_BROADCAST &&
-            state.updatedAtMs - old.updatedAtMs < BROADCAST_GRACE_MS
+            state.updatedAtMonoMs - old.updatedAtMonoMs < BROADCAST_GRACE_MS
         ) {
             return false
         }
         if (old != null && old.source == StockPlayerSources.ACCESSIBILITY &&
             state.source == StockPlayerSources.NOTIFICATION &&
-            state.updatedAtMs - old.updatedAtMs < ACCESSIBILITY_GRACE_MS
+            state.updatedAtMonoMs - old.updatedAtMonoMs < ACCESSIBILITY_GRACE_MS
         ) {
             return false
         }

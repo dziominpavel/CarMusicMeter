@@ -87,18 +87,22 @@ class EventLog(baseDir: File) {
      * Чистка по политике: журнал — по дате из имени и лимиту объёма,
      * снимки и crash-файлы — по количеству. Текущий день не удаляется.
      */
+    fun planTrim(
+        policy: StoragePolicy = StoragePolicy.DEFAULT,
+        nowMs: Long = System.currentTimeMillis(),
+    ): RetentionPlan = RetentionPlanner.plan(
+        logs = scanLogs(),
+        snapshots = scanSnapshots(),
+        crashes = scanCrashes(),
+        policy = policy,
+        today = StorageDates.dateOf(nowMs),
+    )
+
     fun trimOld(
         policy: StoragePolicy = StoragePolicy.DEFAULT,
         nowMs: Long = System.currentTimeMillis(),
     ): RetentionPlan {
-        val today = StorageDates.dateOf(nowMs)
-        val plan = RetentionPlanner.plan(
-            logs = scanLogs(),
-            snapshots = scanSnapshots(),
-            crashes = scanCrashes(),
-            policy = policy,
-            today = today,
-        )
+        val plan = planTrim(policy, nowMs)
         val deleted = plan.all.filter { it.file.delete() }
         if (deleted.isNotEmpty()) {
             val reasons = plan.reasons().joinToString("+").ifBlank { "policy" }

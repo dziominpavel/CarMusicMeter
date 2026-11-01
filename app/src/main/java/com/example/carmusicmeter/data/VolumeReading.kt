@@ -29,9 +29,8 @@ object VolumeSelector {
         mcuMax: Int = DEFAULT_MCU_MAX,
     ): VolumeReading {
         if (mcu != null && mcu.volume != null) {
-            val value = if (mcu.muted == true) 0 else mcu.volume
             return VolumeReading(
-                value = value,
+                value = mcu.volume,
                 max = mcuMax.takeIf { it > 0 },
                 source = VolumeSource.MCU,
                 muted = mcu.muted == true,

@@ -46,6 +46,7 @@ class StockPlayerAccessibilityService : AccessibilityService() {
             texts = texts,
             playing = audio?.isMusicActive == true,
             nowMs = System.currentTimeMillis(),
+            nowMonoMs = SystemClock.elapsedRealtime(),
         ) ?: return
         StockPlayerBridge.update(state)
 

@@ -52,6 +52,20 @@ class StockPlayerParserTest {
     }
 
     @Test
+    fun `broadcast без play state не считается паузой при активной музыке`() {
+        val state = StockPlayerParser.fromBroadcast(
+            extras = mapOf("title" to "Song Title"),
+            nowMs = now,
+            packageName = "com.yf.teyesspotify",
+        )
+
+        assertTrue(state != null)
+        assertTrue(state?.playingKnown == false)
+        assertEquals(MediaPhase.PLAYING, state?.toSnapshot(now, isMusicActive = true)?.phase)
+        assertEquals(MediaPhase.PAUSED, state?.toSnapshot(now, isMusicActive = false)?.phase)
+    }
+
+    @Test
     fun `accessibility отсекает кнопки время и выбирает название`() {
         val state = StockPlayerParser.fromAccessibility(
             packageName = "com.yf.teyesspotify",

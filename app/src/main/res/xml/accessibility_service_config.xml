@@ -3,6 +3,7 @@
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewTextChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canRetrieveWindowContent="true"
+    android:packageNames="com.yf.teyesspotify,com.syu.music"
     android:description="@string/accessibility_description"
     android:notificationTimeout="300"
     android:settingsActivity="com.example.carmusicmeter.MainActivity" />

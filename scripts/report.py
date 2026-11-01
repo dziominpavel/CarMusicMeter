@@ -27,6 +27,7 @@ from pathlib import Path
 SESSION_GAP_MS = 10 * 60 * 1000
 POSITION_RESET_MAX_MS = 1_000
 POSITION_RESET_MIN_PLAYED_MS = 5_000
+RATED_REASONS = {"completed", "skipped", "interrupted"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -231,6 +232,27 @@ def new_track(key: str) -> dict:
     }
 
 
+def normalize_text(value) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def group_key(event: dict) -> str | None:
+    """Единый ключ для старых (с duration/mediaId) и новых trackKey.
+
+    Новый trackKey сам стабилен (package::title::artist), поэтому его нельзя
+    пересобирать из полей: поздний artist иначе разведёт start и end.
+    Старый ключ содержит mediaId/duration; для него группируем по полям.
+    """
+    key = event.get("trackKey")
+    if key and str(key).count("::") == 2:
+        return str(key)
+    package = event.get("package")
+    title = event.get("title")
+    if package and title:
+        return f"{package}::{normalize_text(title)}::{normalize_text(event.get('artist'))}"
+    return str(key) if key else None
+
+
 def analyze(events: list[dict], session_gap_ms: int):
     # Сессии (поездки) по разрывам между событиями.
     sessions = []
@@ -254,12 +276,13 @@ def analyze(events: list[dict], session_gap_ms: int):
 
     tracks: dict[str, dict] = {}
     current: dict[str, dict] = {}
+    last_progress: dict[str, dict] = {}
     last_volume = None
     position_resets = 0
 
     for event in events:
         event_type = event.get("type")
-        key = event.get("trackKey")
+        key = group_key(event)
         ts = int(event.get("ts") or 0)
 
         if event_type == "volume_changed":
@@ -276,6 +299,24 @@ def analyze(events: list[dict], session_gap_ms: int):
             continue
 
         if not key:
+            continue
+
+        if event_type == "track_progress":
+            if key not in current:
+                continue
+            track = tracks.get(key)
+            if track is not None:
+                for field in ("title", "artist", "package"):
+                    if event.get(field) is not None:
+                        track[field] = event[field]
+            last_progress[key] = {
+                "ts": ts,
+                "played": int(event.get("playedMs") or 0),
+                "end_pos": event.get("positionMs"),
+                "volume": event.get("volume"),
+                "duration": event.get("durationMs"),
+                "session": event["_session"],
+            }
             continue
 
         track = tracks.setdefault(key, new_track(key))
@@ -336,15 +377,32 @@ def analyze(events: list[dict], session_gap_ms: int):
         if track["key"] in current:
             start = current[track["key"]]
             pause = track["last_pause"]
-            use_pause = pause is not None and pause["ts"] > start["ts"]
+            checkpoint = last_progress.get(track["key"])
+            pause_ts = pause["ts"] if pause else -1
+            checkpoint_ts = checkpoint["ts"] if checkpoint else -1
+            use_checkpoint = checkpoint is not None and checkpoint_ts > start["ts"] and (
+                pause is None or checkpoint_ts >= pause_ts
+            )
+            use_pause = not use_checkpoint and pause is not None and pause_ts > start["ts"]
             open_play = {
                 "startedAt": start["ts"],
-                "played": pause["played"] if use_pause else 0,
-                "duration": start.get("duration"),
-                "end_pos": None,
+                "played": (
+                    checkpoint["played"] if use_checkpoint
+                    else pause["played"] if use_pause
+                    else 0
+                ),
+                "duration": (
+                    checkpoint.get("duration") if use_checkpoint
+                    else start.get("duration")
+                ) or start.get("duration"),
+                "end_pos": checkpoint.get("end_pos") if use_checkpoint else None,
                 "reason": "open",
                 "vol_start": start.get("volume"),
-                "vol_end": pause["volume"] if use_pause else None,
+                "vol_end": (
+                    checkpoint.get("volume") if use_checkpoint
+                    else pause["volume"] if use_pause
+                    else None
+                ),
                 "session": start["session"],
             }
 
@@ -359,10 +417,11 @@ def analyze(events: list[dict], session_gap_ms: int):
             duration = play.get("duration")
             if duration and duration > 0:
                 listened_values.append(min(play["played"] / duration, 1.0))
-                progress = play.get("end_pos")
-                if progress is None:
-                    progress = play["played"]
-                completions.append(min(max(progress / duration, 0.0), 1.0))
+                if play["reason"] in RATED_REASONS:
+                    progress = play.get("end_pos")
+                    if progress is None:
+                        progress = play["played"]
+                    completions.append(min(max(progress / duration, 0.0), 1.0))
                 if play["reason"] == "skipped":
                     point = play.get("end_pos")
                     if point is None:
@@ -377,6 +436,11 @@ def analyze(events: list[dict], session_gap_ms: int):
         skipped = sum(1 for play in closed if play["reason"] == "skipped")
         completed = sum(1 for play in closed if play["reason"] == "completed")
         interrupted = sum(1 for play in closed if play["reason"] == "interrupted")
+        service_stopped = sum(1 for play in closed if play["reason"] == "service_stopped")
+        session_lost = sum(1 for play in closed if play["reason"] == "session_lost")
+        not_played = sum(1 for play in closed if play["reason"] == "not_played")
+        stopped = sum(1 for play in closed if play["reason"] == "stopped")
+        rated_plays = sum(1 for play in closed if play["reason"] in RATED_REASONS)
         early = sum(1 for point in skip_points if point < 0.25)
         played_total = sum(play["played"] for play in closed)
         if open_play:
@@ -395,15 +459,20 @@ def analyze(events: list[dict], session_gap_ms: int):
             "package": track["package"],
             "plays": plays_total,
             "closed_plays": closed_total,
+            "rated_plays": rated_plays,
             "open": open_play is not None,
             "completed": completed,
             "skipped": skipped,
             "interrupted": interrupted,
+            "service_stopped": service_stopped,
+            "session_lost": session_lost,
+            "not_played": not_played,
+            "stopped": stopped,
             "played_ms": played_total,
             "duration_ms": track_duration,
             "completion": statistics.mean(completions) if completions else None,
             "listened": statistics.mean(listened_values) if listened_values else None,
-            "skip_rate": (skipped / closed_total) if closed_total else None,
+            "skip_rate": (skipped / rated_plays) if rated_plays else None,
             "early_skip_rate": (early / skipped) if skipped else None,
             "early_skips": early,
             "avg_skip_pct": statistics.mean(skip_points) if skip_points else None,
@@ -425,7 +494,7 @@ def analyze(events: list[dict], session_gap_ms: int):
 def delete_candidates(metrics: list[dict], min_plays: int, min_duration: int) -> list[dict]:
     candidates = []
     for track in metrics:
-        if track["closed_plays"] < min_plays:
+        if track["rated_plays"] < min_plays:
             continue
         duration = track.get("duration_ms")
         if duration is not None and duration < min_duration * 1000:
@@ -437,14 +506,14 @@ def delete_candidates(metrics: list[dict], min_plays: int, min_duration: int) ->
         if track["completed"] > 0:
             continue
         reasons = [
-            f"{track['skipped']} из {track['closed_plays']} — скип",
+            f"{track['skipped']} из {track['rated_plays']} — скип",
             f"средний прогресс {pct(track['completion'])}",
             "ни разу не дослушан",
         ]
         if track["volume_vs_trip"] is not None and track["volume_vs_trip"] < -0.5:
             reasons.append("громкость ниже обычной")
         candidates.append({**track, "reasons": reasons})
-    candidates.sort(key=lambda item: (-(item["skip_rate"] or 0), -item["closed_plays"]))
+    candidates.sort(key=lambda item: (-(item["skip_rate"] or 0), -item["rated_plays"]))
     return candidates
 
 
@@ -482,9 +551,14 @@ def render_report(
 ):
     total_played = sum(track["played_ms"] or 0 for track in metrics)
     closed = sum(track["closed_plays"] for track in metrics)
+    rated = sum(track["rated_plays"] for track in metrics)
     completed = sum(track["completed"] for track in metrics)
     skipped = sum(track["skipped"] for track in metrics)
     interrupted = sum(track["interrupted"] for track in metrics)
+    service_stopped = sum(track["service_stopped"] for track in metrics)
+    session_lost = sum(track["session_lost"] for track in metrics)
+    not_played = sum(track["not_played"] for track in metrics)
+    stopped = sum(track["stopped"] for track in metrics)
     opens = sum(1 for track in metrics if track["open"])
     first_ts = sessions[0]["start"] if sessions else None
     last_ts = sessions[-1]["end"] if sessions else None
@@ -522,8 +596,12 @@ def render_report(
         f"треков: {len(metrics)} · прослушано: {fmt_ms(total_played)}"
     )
     lines.append(
-        f"Закрытых: {closed} · completed: {completed} · skipped: {skipped} · "
-        f"interrupted: {interrupted} · открытых: {opens}"
+        f"Закрытых: {closed} · оценённых: {rated} · completed: {completed} · "
+        f"skipped: {skipped} · interrupted: {interrupted} · открытых: {opens}"
+    )
+    lines.append(
+        f"Технические окончания: service_stopped: {service_stopped} · "
+        f"session_lost: {session_lost} · not_played: {not_played} · stopped: {stopped}"
     )
     lines.append("")
     lines.append(render_table(metrics, 0 if args.all else args.limit))
@@ -560,11 +638,12 @@ def main() -> int:
 
     if args.csv:
         fields = [
-            "key", "package", "title", "artist", "plays", "closed_plays", "open",
-            "completed", "skipped", "interrupted", "played_ms", "duration_ms", "completion",
-            "listened", "skip_rate", "early_skip_rate", "early_skips", "avg_skip_pct",
-            "volume_delta", "volume_vs_trip", "volume_changes", "volume_up",
-            "volume_down", "seek_back", "seek_fwd", "days", "last_played",
+            "key", "package", "title", "artist", "plays", "closed_plays", "rated_plays", "open",
+            "completed", "skipped", "interrupted", "service_stopped", "session_lost",
+            "not_played", "stopped", "played_ms", "duration_ms", "completion", "listened", "skip_rate",
+            "early_skip_rate", "early_skips", "avg_skip_pct", "volume_delta", "volume_vs_trip",
+            "volume_changes", "volume_up", "volume_down", "seek_back", "seek_fwd", "days",
+            "last_played",
         ]
         with open(args.csv, "w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
@@ -588,9 +667,14 @@ def main() -> int:
             "tracks": len(metrics),
             "sessions": len(sessions),
             "played_ms": sum(track["played_ms"] or 0 for track in metrics),
+            "rated_plays": sum(track["rated_plays"] for track in metrics),
             "completed": sum(track["completed"] for track in metrics),
             "skipped": sum(track["skipped"] for track in metrics),
             "interrupted": sum(track["interrupted"] for track in metrics),
+            "service_stopped": sum(track["service_stopped"] for track in metrics),
+            "session_lost": sum(track["session_lost"] for track in metrics),
+            "not_played": sum(track["not_played"] for track in metrics),
+            "stopped": sum(track["stopped"] for track in metrics),
             "open": sum(1 for track in metrics if track["open"]),
             "position_resets": position_resets,
         },

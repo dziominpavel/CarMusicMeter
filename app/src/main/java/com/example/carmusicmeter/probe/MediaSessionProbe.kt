@@ -7,6 +7,7 @@ import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.SystemClock
 import androidx.core.app.NotificationManagerCompat
 import com.example.carmusicmeter.data.MediaPhase
 import com.example.carmusicmeter.data.MediaSnapshot
@@ -31,8 +32,23 @@ class MediaSessionProbe(private val context: Context) {
 
     private val listenerComponent = ComponentName(context, NotificationWatchService::class.java)
 
-    fun hasNotificationAccess(): Boolean =
-        NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
+    @Volatile
+    private var accessCheckedAt = 0L
+
+    @Volatile
+    private var accessGranted = false
+
+    fun hasNotificationAccess(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (accessCheckedAt > 0 && now - accessCheckedAt < ACCESS_CACHE_MS) {
+            return accessGranted
+        }
+        val granted = NotificationManagerCompat.getEnabledListenerPackages(context)
+            .contains(context.packageName)
+        accessGranted = granted
+        accessCheckedAt = now
+        return granted
+    }
 
     fun capture(): CaptureResult {
         if (!hasNotificationAccess()) {
@@ -157,6 +173,8 @@ class MediaSessionProbe(private val context: Context) {
         this?.let { runCatching { it.getLong(key) }.getOrNull() }?.takeIf { it > 0L }
 
     private companion object {
+        const val ACCESS_CACHE_MS = 10_000L
+
         val BITMAP_KEYS = setOf(
             MediaMetadata.METADATA_KEY_ART,
             MediaMetadata.METADATA_KEY_ALBUM_ART,

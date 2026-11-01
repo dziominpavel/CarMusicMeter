@@ -22,6 +22,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
@@ -31,8 +34,11 @@ import com.example.carmusicmeter.data.ExportRange
 import com.example.carmusicmeter.data.ExportStorage
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.Prefs
+import com.example.carmusicmeter.data.RetentionPlan
+import com.example.carmusicmeter.data.StoragePolicy
 import com.example.carmusicmeter.autostart.AutostartScheduler
 import com.example.carmusicmeter.data.StorageStats
+import com.example.carmusicmeter.ui.formatBytes
 import com.example.carmusicmeter.diagnostics.SnapshotWriter
 import com.example.carmusicmeter.probe.MediaSessionProbe
 import com.example.carmusicmeter.service.AccessibilityAccess
@@ -86,6 +92,20 @@ class MainActivity : ComponentActivity() {
                 var exportRange by remember { mutableStateOf(prefs.exportRange) }
                 var showExportDialog by remember { mutableStateOf(false) }
                 var exportPlan by remember { mutableStateOf<ExportPlan?>(null) }
+                var pendingRetention by remember { mutableStateOf<RetentionPlan?>(null) }
+                var pendingRetentionDays by remember { mutableStateOf<Int?>(null) }
+
+                val applyRetention: (Int) -> Unit = { days ->
+                    retentionDays = days
+                    prefs.retentionDays = days
+                    lifecycleScope.launch {
+                        withContext(Dispatchers.IO) {
+                            app.eventLog.trimOld(prefs.storagePolicy())
+                        }
+                        refreshStorageStats()
+                    }
+                    toast("Срок хранения: ${retentionLabel(days)}")
+                }
 
                 val exportLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.CreateDocument("application/zip"),
@@ -139,15 +159,26 @@ class MainActivity : ComponentActivity() {
                         toast(if (enabled) "Автозапуск включён" else "Автозапуск выключен")
                     },
                     onRetentionChange = { days ->
-                        retentionDays = days
-                        prefs.retentionDays = days
-                        lifecycleScope.launch {
-                            withContext(Dispatchers.IO) {
-                                app.eventLog.trimOld(prefs.storagePolicy())
+                        if (days == 0) {
+                            applyRetention(days)
+                        } else {
+                            lifecycleScope.launch {
+                                val plan = withContext(Dispatchers.IO) {
+                                    app.eventLog.planTrim(
+                                        StoragePolicy(
+                                            retentionDays = days,
+                                            maxBytes = prefs.maxBytes,
+                                        ),
+                                    )
+                                }
+                                if (plan.isEmpty) {
+                                    applyRetention(days)
+                                } else {
+                                    pendingRetentionDays = days
+                                    pendingRetention = plan
+                                }
                             }
-                            refreshStorageStats()
                         }
-                        toast("Срок хранения: ${retentionLabel(days)}")
                     },
                     onExportRangeChange = { range ->
                         exportRange = range
@@ -180,6 +211,46 @@ class MainActivity : ComponentActivity() {
                     onSnapshot = { takeSnapshot() },
                     onExport = { showExportDialog = true },
                 )
+
+                val retentionPlan = pendingRetention
+                val retentionDaysPending = pendingRetentionDays
+                if (retentionPlan != null && retentionDaysPending != null) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            pendingRetention = null
+                            pendingRetentionDays = null
+                        },
+                        title = { Text("Удалить старые логи?") },
+                        text = {
+                            Text(
+                                "Будет удалено ${retentionPlan.all.size} файлов " +
+                                    "(${formatBytes(retentionPlan.totalBytes)}) старше " +
+                                    "$retentionDaysPending дней. Удаление необратимо.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    pendingRetention = null
+                                    pendingRetentionDays = null
+                                    applyRetention(retentionDaysPending)
+                                },
+                            ) {
+                                Text("Удалить")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(
+                                onClick = {
+                                    pendingRetention = null
+                                    pendingRetentionDays = null
+                                },
+                            ) {
+                                Text("Отмена")
+                            }
+                        },
+                    )
+                }
 
                 if (showExportDialog) {
                     ExportDialog(

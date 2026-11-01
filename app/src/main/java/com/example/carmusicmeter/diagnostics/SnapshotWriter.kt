@@ -162,6 +162,7 @@ class SnapshotWriter(
         put("playing", playing)
         put("source", source)
         put("updatedAt", updatedAtMs)
+        put("updatedAtMono", updatedAtMonoMs)
         put("rawTexts", JSONArray(rawTexts))
         put("extras", Json.toJsonValue(extras))
     }

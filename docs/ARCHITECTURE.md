@@ -57,6 +57,20 @@ AudioManager ──────────────────────�
 Частота выбрана так, чтобы не крутить binder-вызовы без нужды, но поймать
 переключение трека и поворот ручки громкости.
 
+Длительности, позиция и grace-интервалы считаются по `SystemClock.elapsedRealtime()`;
+`System.currentTimeMillis()` используется только для `ts` событий. Скачок
+настенных часов поэтому не меняет `playedMs` и не рвёт трек.
+
+Ошибка одного тика (например, `IOException` при записи) не завершает цикл:
+служба делает backoff, пишет `capture_error`, показывает состояние сбора на
+экране и в уведомлении и продолжает после восстановления. Полный список
+потерь — в `LiveState.droppedEvents`.
+
+Остановка службы сначала отменяет цикл и ждёт его завершения, затем один раз
+финализирует текущий трек. Если цикл не завершился за 2 секунды, финализация
+пропускается, чтобы не записать `track_ended` параллельно с тиком; причина
+попадает в health-диагностику.
+
 ## События
 
 Все события — строки JSONL в `files/logs/events-YYYY-MM-DD.jsonl`.
@@ -65,14 +79,19 @@ AudioManager ──────────────────────�
 | Тип | Когда | Ключевые поля |
 |---|---|---|
 | `track_started` | появился новый трек | `trackKey`, `package`, `source`, `title`, `artist`, `album`, `mediaId`, `durationMs`, `positionMs`, `volume`, `volumeSource`, `actions`, `metadataKeys` |
+| `track_progress` | раз в 60 с и на паузе/остановке | `trackKey`, `positionMs`, `playedMs`, `durationMs`, `volume`, `volumeMax`, `phase` |
 | `track_ended` | трек сменился/пропал/служба остановилась | `playedMs`, `endPositionMs`, `endReason`, `completed`, `volumeStart/End/Low/High`, `volumeChanges`, `volumeSource`, `nextTitle` |
+| `capture_error` | ошибка тика или записи | `stage`, `message`, `exception`, `consecutive`, `droppedEvents` |
+| `capture_recovered` | цикл восстановился после ошибки | `failures`, `lastError` |
+| `clock_changed` | настенные часы прыгнули относительно монотонных | `wallDelta`, `monoDelta`, `driftMs` |
 | `playback_paused` / `playback_resumed` / `playback_stopped` | смена состояния | `trackKey`, `source`, `positionMs`, `playedMs` |
 | `seek` | позиция скакнула больше чем на 5 с | `fromMs`, `toMs`, `deltaMs` |
-| `volume_changed` | изменилась громкость | `previous`, `value`, `max`, `delta`, `level`, `source` (`mcu`/`audio`), `muted`, `trackKey` |
+| `volume_changed` | изменилась абсолютная громкость | `previous`, `value`, `max`, `delta`, `level`, `source` (`mcu`/`audio`), `muted`, `trackKey` |
+| `mute_changed` | включили/выключили mute | `muted`, `volume`, `volumeMax`, `source`, `trackKey` |
 | `notification` | уведомление | `package`, `title`, `text`, `bigText`, `actions`, `hasMediaSession`, `mediaLike`, `extras`, `remoteTexts` |
 | `stock_player_text` | изменился текст штатного плеера | `package`, `title`, `artist`, `source`, `playing`, `rawTexts` |
 | `teyes_toolkit` | изменилось состояние MCU-сервиса | `available`, `connected`, `module`, `volume`, `muted`, `error` |
-| `service_started` | служба запущена | `source` (`manual`, `boot`, `job`, `media_mounted`, `app_open`, `teyes_autostart`, `accessibility`, `notification`) |
+| `service_started` | служба запущена | `source` (`manual`, `boot`, `job`, `media_mounted`, `app_open`, `teyes_autostart`, `accessibility`, `notification`, `system_restart`) |
 | `app_crash` | необработанное исключение | `message`, `exception`, `file` |
 | `boot_received` | получен boot-интент | `action` |
 | `service_start_failed` | не удалось стартовать foreground-службу | `error`, `source` |
@@ -84,8 +103,25 @@ AudioManager ──────────────────────�
 - `skipped` — трек сменился в том же плеере, не дослушан;
 - `interrupted` — сессию перехватил другой пакет;
 - `stopped` — плеер перешёл в `STOPPED`;
+- `not_played` — трек был активен меньше 3 секунд и не дослушан;
 - `session_lost` — сессия исчезла дольше чем на 5 с;
 - `service_stopped` — службу остановили.
+
+## Идентичность трека
+
+`trackKey` — логический ключ: `package::normalized title::normalized artist`.
+Регистр и повторные пробелы нормализуются. Длительность, `mediaId`, путь и
+источник в ключ не входят: они могут появиться позже или смениться у того же
+трека. Ключ фиксируется при `track_started` и не меняется до `track_ended`.
+
+Поздняя длительность, поздний исполнитель и смена `source` (уведомление →
+broadcast → accessibility) обновляют snapshot текущего трека, а не создают
+второй `track_started`. `mediaId`/`path` остаются в событиях, чтобы на ПК можно
+было различить совпавшие по названию треки.
+
+`report.py` группирует новые события по `trackKey`, а старые выгрузки — по
+нормализованным `package + title + artist`; поэтому старый и новый формат
+можно смешивать в одном отчёте.
 
 ## Штатный плеер Teyes и источники
 
@@ -101,10 +137,20 @@ AudioManager ──────────────────────�
    тексты сохраняются, потому что эвристика «первый текст — название» может
    ошибаться.
 4. Уведомление — extras и текст `RemoteViews`, если плеер их публикует.
+   Обновление только времени позиции в `text/subText` не создаёт событие;
+   в кэш снимка попадают только медиа-подобные уведомления и уведомления
+   штатного плеера, а запись события идёт вне main-потока.
 
 `SourcePicker` выбирает играющий источник; при равенстве приоритет у
 MediaSession. Каждый трек помечается `source`, поэтому в отчёте можно
-отделить данные MediaSession от данных лаунчера/интерфейса.
+отделить данные MediaSession от данных лаунчера/интерфейса. Трек стартует
+только в `PLAYING`: сессия на паузе при запуске службы не создаёт фантомное
+прослушивание, а `not_played` отсекает случайные старты короче трёх секунд.
+
+Состояние штатного плеера не считается играющим только потому, что существует
+уведомление: для `notification` и broadcast без `play_state` используется
+`isMusicActive`. Пауза живёт в снимке 10 минут, играющее состояние — 30 минут,
+поэтому пауза на светофоре или редкий broadcast не разрезают трек.
 
 Громкость: `TeyesToolkitClient` подключается к `com.syu.ms/app.ToolkitService`
 и читает модуль `sound` (`U_VOL`, `U_MUTE`). Это реальная громкость панели.
@@ -112,6 +158,10 @@ MediaSession. Каждый трек помечается `source`, поэтом�
 `max=null`. Если сервис недоступен, используется `AudioManager`; если
 максимум явно отключён, `max`/`level` могут быть `null`. Подставлять 25 от
 Android нельзя.
+
+Mute не подменяет абсолютную громкость нулём: `volume_changed` несёт реальное
+значение, а включение/выключение mute пишется отдельным `mute_changed`. Поэтому
+`volumeLow/High` и `volumeChanges` не искажаются.
 
 ## Автозапуск
 
@@ -139,7 +189,8 @@ Android нельзя.
   завершённые дни старше настроенного срока, а при превышении лимита объёма
   (по умолчанию 500 МБ) — самые старые завершённые дни. Текущий день защищён.
 - Снимков остаётся 600 последних, crash-файлов — 50. Факт чистки пишется
-  событием `retention_trimmed`.
+  событием `retention_trimmed`. Перед сокращением срока хранения экран
+  показывает число и объём удаляемых файлов и просит подтверждение.
 - Возраст дневного лога считается по дате из имени (`events-YYYY-MM-DD`), а не
   по `lastModified`: часы магнитолы могут сбиваться. Неразборчивые имена
   автоматически не удаляются.

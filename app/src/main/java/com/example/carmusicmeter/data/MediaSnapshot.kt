@@ -1,7 +1,5 @@
 package com.example.carmusicmeter.data
 
-import java.util.Locale
-
 enum class MediaPhase { PLAYING, PAUSED, STOPPED, UNKNOWN }
 
 /**
@@ -25,17 +23,16 @@ data class MediaSnapshot(
     val hasArtwork: Boolean = false,
     val source: String = StockPlayerSources.MEDIA_SESSION,
 ) {
-    /** Стабильный ключ трека в пределах одного плеера. */
+    /**
+     * Стабильный логический ключ трека.
+     *
+     * Не включает длительность, `mediaId`, путь и источник: они могут появиться
+     * позже или смениться у того же трека. Ключ фиксируется при старте трека.
+     */
     val trackKey: String
-        get() {
-            val name = listOfNotNull(title, artist)
-                .joinToString("|")
-                .trim()
-                .lowercase(Locale.ROOT)
-            val id = mediaId?.takeIf { it.isNotBlank() } ?: "-"
-            if (name.isNotBlank()) return "$packageName::$id::$name::${durationMs ?: 0}"
-            return "$packageName::session::${sessionTag ?: "default"}"
-        }
+        get() = TrackIdentity.key(packageName, title, artist, sessionTag)
+
+    fun sameTrack(other: MediaSnapshot): Boolean = TrackIdentity.sameTrack(this, other)
 
     val hasTitle: Boolean get() = !title.isNullOrBlank()
 }

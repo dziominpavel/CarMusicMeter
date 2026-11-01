@@ -1,19 +1,28 @@
 package com.example.carmusicmeter.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ListeningTrackerTest {
 
+    private val baseWall = 1_700_000_000_000L
+
+    private fun t(monoMs: Long, wallMs: Long = baseWall + monoMs) = TickTime(
+        wallMs = wallMs,
+        monoMs = monoMs,
+    )
+
     private fun snap(
         title: String = "Track A",
         positionMs: Long = 0L,
-        durationMs: Long = 180_000L,
+        durationMs: Long? = 180_000L,
         phase: MediaPhase = MediaPhase.PLAYING,
         packageName: String = "com.example.player",
-        artist: String = "Artist",
+        artist: String? = "Artist",
+        source: String = StockPlayerSources.MEDIA_SESSION,
     ) = MediaSnapshot(
         packageName = packageName,
         sessionTag = "session",
@@ -23,6 +32,7 @@ class ListeningTrackerTest {
         durationMs = durationMs,
         positionMs = positionMs,
         phase = phase,
+        source = source,
     )
 
     @Test
@@ -30,10 +40,10 @@ class ListeningTrackerTest {
         val tracker = ListeningTracker()
         val events = mutableListOf<LogEvent>()
 
-        events += tracker.onTick(0, snap("A", 0), 10, 30).events
-        events += tracker.onTick(10_000, snap("A", 10_000), 10, 30).events
-        events += tracker.onTick(179_000, snap("A", 179_000), 10, 30).events
-        events += tracker.onTick(180_000, snap("B", 0), 10, 30).events
+        events += tracker.onTick(t(0), snap("A", 0), 10, 30).events
+        events += tracker.onTick(t(10_000), snap("A", 10_000), 10, 30).events
+        events += tracker.onTick(t(179_000), snap("A", 179_000), 10, 30).events
+        events += tracker.onTick(t(180_000), snap("B", 0), 10, 30).events
 
         val ended = events.single { it.type == "track_ended" }
         assertEquals("completed", ended.fields["endReason"])
@@ -46,9 +56,9 @@ class ListeningTrackerTest {
         val tracker = ListeningTracker()
         val events = mutableListOf<LogEvent>()
 
-        events += tracker.onTick(0, snap("A", 0), 10, 30).events
-        events += tracker.onTick(10_000, snap("A", 10_000), 10, 30).events
-        events += tracker.onTick(11_000, snap("B", 0), 10, 30).events
+        events += tracker.onTick(t(0), snap("A", 0), 10, 30).events
+        events += tracker.onTick(t(10_000), snap("A", 10_000), 10, 30).events
+        events += tracker.onTick(t(11_000), snap("B", 0), 10, 30).events
 
         val ended = events.single { it.type == "track_ended" }
         assertEquals("skipped", ended.fields["endReason"])
@@ -60,13 +70,23 @@ class ListeningTrackerTest {
         val tracker = ListeningTracker()
         val events = mutableListOf<LogEvent>()
 
-        events += tracker.onTick(0, snap("A", 0), 10, 30).events
-        events += tracker.onTick(10_000, snap("A", 10_000), 10, 30).events
-        events += tracker.onTick(30_000, snap("A", 10_000, phase = MediaPhase.PAUSED), 10, 30).events
-        events += tracker.onTick(40_000, snap("A", 10_000, phase = MediaPhase.PAUSED), 10, 30).events
-        events += tracker.onTick(41_000, snap("A", 11_000), 10, 30).events
+        events += tracker.onTick(t(0), snap("A", 0), 10, 30).events
+        events += tracker.onTick(t(10_000), snap("A", 10_000), 10, 30).events
+        events += tracker.onTick(
+            t(30_000),
+            snap("A", 10_000, phase = MediaPhase.PAUSED),
+            10,
+            30,
+        ).events
+        events += tracker.onTick(
+            t(40_000),
+            snap("A", 10_000, phase = MediaPhase.PAUSED),
+            10,
+            30,
+        ).events
+        events += tracker.onTick(t(41_000), snap("A", 11_000), 10, 30).events
 
-        val live = tracker.onTick(45_000, snap("A", 15_000), 10, 30).live
+        val live = tracker.onTick(t(45_000), snap("A", 15_000), 10, 30).live
 
         assertTrue(events.none { it.type == "track_ended" })
         assertEquals(34_000L, live?.playedMs)
@@ -77,13 +97,23 @@ class ListeningTrackerTest {
         val tracker = ListeningTracker()
         val events = mutableListOf<LogEvent>()
 
-        events += tracker.onTick(0, snap("A", 0), 10, 30).events
-        events += tracker.onTick(10_000, snap("A", 10_000), 10, 30).events
+        events += tracker.onTick(t(0), snap("A", 0), 10, 30).events
+        events += tracker.onTick(t(10_000), snap("A", 10_000), 10, 30).events
         // Штатный плеер на паузе отдаёт 0 вместо реальной позиции.
-        events += tracker.onTick(11_000, snap("A", 1, phase = MediaPhase.PAUSED), 10, 30).events
-        events += tracker.onTick(13_000, snap("A", 0, phase = MediaPhase.PAUSED), 10, 30).events
+        events += tracker.onTick(
+            t(11_000),
+            snap("A", 1, phase = MediaPhase.PAUSED),
+            10,
+            30,
+        ).events
+        events += tracker.onTick(
+            t(13_000),
+            snap("A", 0, phase = MediaPhase.PAUSED),
+            10,
+            30,
+        ).events
         // Переключение на следующий трек.
-        events += tracker.onTick(15_000, snap("B", 0), 10, 30).events
+        events += tracker.onTick(t(15_000), snap("B", 0), 10, 30).events
 
         assertEquals(11_000L, events.single { it.type == "playback_paused" }.fields["positionMs"])
         assertTrue(events.none { it.type == "seek" })
@@ -95,9 +125,9 @@ class ListeningTrackerTest {
         val tracker = ListeningTracker()
         val events = mutableListOf<LogEvent>()
 
-        events += tracker.onTick(0, snap("A", 0), 10, 30).events
-        events += tracker.onTick(5_000, snap("A", 5_000), 10, 30).events
-        events += tracker.onTick(6_000, snap("A", 120_000), 10, 30).events
+        events += tracker.onTick(t(0), snap("A", 0), 10, 30).events
+        events += tracker.onTick(t(5_000), snap("A", 5_000), 10, 30).events
+        events += tracker.onTick(t(6_000), snap("A", 120_000), 10, 30).events
 
         val seek = events.single { it.type == "seek" }
         assertEquals(114_000L, seek.fields["deltaMs"])
@@ -107,10 +137,10 @@ class ListeningTrackerTest {
     fun `громкость логируется только при изменении`() {
         val tracker = ListeningTracker()
 
-        assertTrue(tracker.onVolume(0, 10, 30).isEmpty())
-        assertTrue(tracker.onVolume(500, 10, 30).isEmpty())
+        assertTrue(tracker.onVolume(t(0), 10, 30).isEmpty())
+        assertTrue(tracker.onVolume(t(500), 10, 30).isEmpty())
 
-        val events = tracker.onVolume(1_000, 13, 30)
+        val events = tracker.onVolume(t(1_000), 13, 30)
         assertEquals(1, events.size)
         assertEquals(10, events.first().fields["previous"])
         assertEquals(13, events.first().fields["value"])
@@ -118,11 +148,24 @@ class ListeningTrackerTest {
     }
 
     @Test
+    fun `mute не создаёт ложную громкость ноль`() {
+        val tracker = ListeningTracker()
+        assertTrue(tracker.onVolume(t(0), 30, 43, muted = true).isEmpty())
+
+        val events = tracker.onVolume(t(500), 30, 43, muted = false)
+
+        assertEquals(1, events.size)
+        assertEquals("mute_changed", events.single().type)
+        assertEquals(30, events.single().fields["volume"])
+        assertTrue(events.none { it.type == "volume_changed" })
+    }
+
+    @Test
     fun `старт трека пишется один раз`() {
         val tracker = ListeningTracker()
 
-        val first = tracker.onTick(0, snap("A", 0), 10, 30)
-        val second = tracker.onTick(1_000, snap("A", 1_000), 10, 30)
+        val first = tracker.onTick(t(0), snap("A", 0), 10, 30)
+        val second = tracker.onTick(t(1_000), snap("A", 1_000), 10, 30)
 
         assertEquals(1, first.events.count { it.type == "track_started" })
         assertTrue(second.events.none { it.type == "track_started" })
@@ -131,13 +174,168 @@ class ListeningTrackerTest {
     @Test
     fun `пропавшая сессия закрывает трек как session_lost`() {
         val tracker = ListeningTracker()
-        tracker.onTick(0, snap("A", 0), 10, 30)
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
 
-        val ended = tracker.onTick(10_000, null, 10, 30)
+        val ended = tracker.onTick(t(10_000), null, 10, 30)
             .events
             .single { it.type == "track_ended" }
 
         assertEquals("session_lost", ended.fields["endReason"])
+    }
+
+    @Test
+    fun `скачок настенных часов не меняет playedMs`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(TickTime(wallMs = baseWall, monoMs = 0), snap("A", 0), 10, 30)
+        tracker.onTick(
+            TickTime(wallMs = baseWall + 3_600_000, monoMs = 10_000),
+            snap("A", 10_000),
+            10,
+            30,
+        )
+
+        val live = tracker.onTick(
+            TickTime(wallMs = baseWall + 3_601_000, monoMs = 11_000),
+            snap("A", 11_000),
+            10,
+            30,
+        ).live
+
+        assertEquals(11_000L, live?.playedMs)
+    }
+
+    @Test
+    fun `скачок настенных часов назад не ломает grace`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(TickTime(wallMs = baseWall, monoMs = 0), snap("A", 0), 10, 30)
+
+        val ended = tracker.onTick(
+            TickTime(wallMs = baseWall - 3_600_000, monoMs = 10_000),
+            null,
+            10,
+            30,
+        ).events.single { it.type == "track_ended" }
+
+        assertEquals("session_lost", ended.fields["endReason"])
+    }
+
+    @Test
+    fun `repeat-one закрывает трек и начинает новый`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
+        tracker.onTick(t(179_000), snap("A", 179_000), 10, 30)
+
+        val events = tracker.onTick(t(180_000), snap("A", 0), 10, 30).events
+
+        assertEquals(1, events.count { it.type == "track_ended" })
+        assertEquals("completed", events.single { it.type == "track_ended" }.fields["endReason"])
+        assertEquals(1, events.count { it.type == "track_started" })
+    }
+
+    @Test
+    fun `поздняя длительность и исполнитель не режут трек`() {
+        val tracker = ListeningTracker()
+        val started = tracker.onTick(
+            t(0),
+            snap("A", 0, durationMs = null, artist = null),
+            10,
+            30,
+        ).events.single { it.type == "track_started" }
+
+        val next = tracker.onTick(
+            t(1_000),
+            snap("A", 1_000, durationMs = 180_000, artist = "Artist"),
+            10,
+            30,
+        )
+
+        assertTrue(next.events.none { it.type == "track_ended" || it.type == "track_started" })
+        val ended = tracker.onTick(t(2_000), snap("B", 0), 10, 30)
+            .events.single { it.type == "track_ended" }
+
+        assertEquals(started.fields["trackKey"], ended.fields["trackKey"])
+    }
+
+    @Test
+    fun `смена источника у того же трека не режет трек`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(
+            t(0),
+            snap("A", 0, source = StockPlayerSources.NOTIFICATION),
+            10,
+            30,
+        )
+        val result = tracker.onTick(
+            t(1_000),
+            snap("A", 1_000, source = StockPlayerSources.FYT_BROADCAST),
+            10,
+            30,
+        )
+
+        assertTrue(result.events.none { it.type == "track_ended" || it.type == "track_started" })
+        assertEquals(StockPlayerSources.FYT_BROADCAST, result.live?.source)
+    }
+
+    @Test
+    fun `старт службы на паузе не создаёт фантомный трек`() {
+        val tracker = ListeningTracker()
+
+        val paused = tracker.onTick(
+            t(0),
+            snap("A", 10_000, phase = MediaPhase.PAUSED),
+            10,
+            30,
+        )
+        assertTrue(paused.events.none { it.type == "track_started" })
+
+        val resumed = tracker.onTick(t(1_000), snap("A", 11_000), 10, 30)
+        assertEquals(1, resumed.events.count { it.type == "track_started" })
+    }
+
+    @Test
+    fun `короткий трек получает not_played`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
+        val ended = tracker.onTick(t(2_000), snap("B", 0), 10, 30)
+            .events.single { it.type == "track_ended" }
+
+        assertEquals("not_played", ended.fields["endReason"])
+    }
+
+    @Test
+    fun `повторный finish не даёт второй track_ended`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
+
+        val first = tracker.finish(t(10_000))
+        val second = tracker.finish(t(20_000))
+
+        assertEquals(1, first.size)
+        assertTrue(second.isEmpty())
+        assertEquals("track_ended", first.single().type)
+    }
+
+    @Test
+    fun `checkpoint пишется раз в минуту и один раз на паузе`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
+
+        assertNull(tracker.checkpoint(t(59_000), 10, 30))
+        tracker.onTick(t(60_000), snap("A", 60_000), 10, 30)
+        val periodic = tracker.checkpoint(t(60_000), 10, 30)
+        assertNotNull(periodic)
+        assertEquals("track_progress", periodic?.type)
+        assertEquals(60_000L, periodic?.fields?.get("playedMs"))
+        assertNull(tracker.checkpoint(t(61_000), 10, 30))
+
+        tracker.onTick(
+            t(62_000),
+            snap("A", 60_000, phase = MediaPhase.PAUSED),
+            10,
+            30,
+        )
+        assertNotNull(tracker.checkpoint(t(62_000), 10, 30))
+        assertNull(tracker.checkpoint(t(63_000), 10, 30))
     }
 
     @Test

@@ -46,7 +46,7 @@ class TeyesToolkitClient(private val context: Context) {
 
     private val retry = Runnable { bind() }
 
-    private val connection = object : ServiceConnection {
+    private val connection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             binding = false
             bound = true
@@ -60,6 +60,8 @@ class TeyesToolkitClient(private val context: Context) {
                     null
                 }
             if (soundModule == null) {
+                runCatching { context.unbindService(connection) }
+                bound = false
                 update(
                     connected = true,
                     module = false,
@@ -196,7 +198,7 @@ class TeyesToolkitClient(private val context: Context) {
     }
 
     private fun bind() {
-        if (!started || binding || module != null) return
+        if (!started || binding || bound || module != null) return
         binding = true
         val intent = Intent(ACTION_TOOLKIT).setComponent(
             ComponentName(PACKAGE, SERVICE),

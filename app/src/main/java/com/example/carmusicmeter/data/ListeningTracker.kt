@@ -9,23 +9,28 @@ import kotlin.math.roundToLong
  * Трекер намеренно не знает про Android: время, снимки и громкость приходят
  * снаружи, поэтому логику пропусков, пауз и перемоток можно проверить
  * обычными JVM-тестами.
+ *
+ * `TickTime.wallMs` используется только для `ts` событий и `startedAt`;
+ * все длительности, позиция и grace-интервалы считаются по `monoMs`.
  */
 class ListeningTracker {
 
     private data class Active(
         val key: String,
         var snapshot: MediaSnapshot,
-        val startedAtMs: Long,
+        val startedAtWallMs: Long,
         var playedMs: Long,
         var running: Boolean,
-        var lastTickAtMs: Long,
-        var lastSeenAtMs: Long,
+        var lastTickMonoMs: Long,
+        var lastSeenMonoMs: Long,
         var lastPositionMs: Long?,
-        var lastPositionAtMs: Long,
+        var lastPositionMonoMs: Long,
         var volumeStart: Int,
         var volumeLow: Int,
         var volumeHigh: Int,
         var volumeChanges: Int,
+        var lastCheckpointMonoMs: Long,
+        var lastCheckpointPhase: MediaPhase,
     )
 
     data class TickResult(
@@ -37,6 +42,7 @@ class ListeningTracker {
     private var lastVolume: Int? = null
     private var lastVolumeMax: Int? = null
     private var lastVolumeSource: String? = null
+    private var lastMuted: Boolean? = null
 
     val currentPackage: String?
         get() = active?.snapshot?.packageName
@@ -46,7 +52,7 @@ class ListeningTracker {
      * не изменилось; при изменении привязывает его к текущему треку.
      */
     fun onVolume(
-        nowMs: Long,
+        time: TickTime,
         volume: Int,
         volumeMax: Int,
         source: String = "audio",
@@ -55,11 +61,13 @@ class ListeningTracker {
         val previous = lastVolume
         val previousMax = lastVolumeMax
         val previousSource = lastVolumeSource
+        val previousMuted = lastMuted
 
         if (previousSource != null && previousSource != source) {
             lastVolume = volume
             lastVolumeMax = volumeMax
             lastVolumeSource = source
+            lastMuted = muted
             active?.let {
                 it.volumeStart = volume
                 it.volumeLow = volume
@@ -72,19 +80,26 @@ class ListeningTracker {
         lastVolume = volume
         lastVolumeMax = volumeMax
         lastVolumeSource = source
+        lastMuted = muted
         if (previous == null || previousMax == null) return emptyList()
-        if (previous == volume && previousMax == volumeMax) return emptyList()
+
+        val volumeChanged = previous != volume || previousMax != volumeMax
+        val muteChanged = previousMuted != null && previousMuted != muted
+        if (!volumeChanged && !muteChanged) return emptyList()
 
         val current = active
-        current?.let {
-            it.volumeChanges += 1
-            it.volumeLow = minOf(it.volumeLow, volume)
-            it.volumeHigh = maxOf(it.volumeHigh, volume)
+        if (volumeChanged) {
+            current?.let {
+                it.volumeChanges += 1
+                it.volumeLow = minOf(it.volumeLow, volume)
+                it.volumeHigh = maxOf(it.volumeHigh, volume)
+            }
         }
 
-        return listOf(
-            LogEvent(
-                ts = nowMs,
+        val events = mutableListOf<LogEvent>()
+        if (volumeChanged) {
+            events += LogEvent(
+                ts = time.wallMs,
                 type = "volume_changed",
                 fields = linkedMapOf(
                     "previous" to previous,
@@ -98,14 +113,30 @@ class ListeningTracker {
                     "trackKey" to current?.key,
                     "title" to current?.snapshot?.title,
                     "artist" to current?.snapshot?.artist,
-                    "trackPositionMs" to current?.let { extrapolatePosition(it, nowMs) },
+                    "trackPositionMs" to current?.let { extrapolatePosition(it, time.monoMs) },
                 ),
-            ),
-        )
+            )
+        }
+        if (muteChanged) {
+            events += LogEvent(
+                ts = time.wallMs,
+                type = "mute_changed",
+                fields = linkedMapOf(
+                    "muted" to muted,
+                    "volume" to volume,
+                    "volumeMax" to volumeMax.takeIf { it > 0 },
+                    "source" to source,
+                    "trackKey" to current?.key,
+                    "title" to current?.snapshot?.title,
+                    "artist" to current?.snapshot?.artist,
+                ),
+            )
+        }
+        return events
     }
 
     fun onTick(
-        nowMs: Long,
+        time: TickTime,
         snapshot: MediaSnapshot?,
         volume: Int,
         volumeMax: Int,
@@ -116,6 +147,7 @@ class ListeningTracker {
             lastVolume = volume
             lastVolumeMax = volumeMax
             lastVolumeSource = source
+            lastMuted = muted
             active?.let {
                 it.volumeStart = volume
                 it.volumeLow = volume
@@ -127,46 +159,61 @@ class ListeningTracker {
             lastVolume = volume
             lastVolumeMax = volumeMax
             lastVolumeSource = source
+            lastMuted = muted
         }
 
         val events = mutableListOf<LogEvent>()
         var current = active
 
         if (current == null) {
-            if (snapshot != null) {
-                current = start(nowMs, snapshot, volume)
+            if (snapshot != null && snapshot.phase == MediaPhase.PLAYING) {
+                current = start(time, snapshot, volume)
                 active = current
-                events += startEvent(current, nowMs)
+                events += startEvent(current, time.wallMs)
             }
-            return TickResult(events, liveTrack(nowMs, volume, volumeMax))
+            return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
         }
 
-        accumulate(current, nowMs)
+        accumulate(current, time.monoMs)
 
         if (snapshot == null) {
-            if (nowMs - current.lastSeenAtMs > SESSION_GRACE_MS) {
-                events += endEvent(current, nowMs, next = null, explicitReason = "session_lost")
+            if (time.monoMs - current.lastSeenMonoMs > SESSION_GRACE_MS) {
+                events += endEvent(current, time, next = null, explicitReason = "session_lost")
                 active = null
             }
-            return TickResult(events, liveTrack(nowMs, volume, volumeMax))
+            return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
         }
 
-        current.lastSeenAtMs = nowMs
+        current.lastSeenMonoMs = time.monoMs
 
-        if (snapshot.trackKey != current.key) {
-            events += endEvent(current, nowMs, next = snapshot, explicitReason = null)
-            val next = start(nowMs, snapshot, volume)
+        if (!current.snapshot.sameTrack(snapshot)) {
+            events += endEvent(current, time, next = snapshot, explicitReason = null)
+            val next = start(time, snapshot, volume)
             active = next
-            events += startEvent(next, nowMs)
-            return TickResult(events, liveTrack(nowMs, volume, volumeMax))
+            events += startEvent(next, time.wallMs)
+            return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
         }
 
         val oldPhase = current.snapshot.phase
         val newPhase = snapshot.phase
         val phaseChanged = oldPhase != newPhase
         val reported = snapshot.positionMs
-        val expected = expectedPosition(current, nowMs)
+        val expected = expectedPosition(current, time.monoMs)
         val positionReset = isPositionReset(newPhase, reported, expected)
+        val repeated = !phaseChanged &&
+            newPhase == MediaPhase.PLAYING &&
+            reported != null &&
+            reported <= POSITION_RESET_MAX_MS &&
+            current.snapshot.durationMs != null &&
+            expected >= current.snapshot.durationMs!! - COMPLETE_SLACK_MS
+
+        if (repeated) {
+            events += endEvent(current, time, next = snapshot, explicitReason = null)
+            val next = start(time, snapshot, volume)
+            active = next
+            events += startEvent(next, time.wallMs)
+            return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
+        }
 
         if (phaseChanged) {
             val eventType = when (newPhase) {
@@ -177,7 +224,7 @@ class ListeningTracker {
             }
             if (eventType != null) {
                 events += LogEvent(
-                    ts = nowMs,
+                    ts = time.wallMs,
                     type = eventType,
                     fields = linkedMapOf(
                         "trackKey" to current.key,
@@ -188,7 +235,7 @@ class ListeningTracker {
                         "positionMs" to if (positionReset) {
                             expected
                         } else {
-                            reported ?: extrapolatePosition(current, nowMs)
+                            reported ?: extrapolatePosition(current, time.monoMs)
                         },
                         "playedMs" to current.playedMs,
                     ),
@@ -201,13 +248,13 @@ class ListeningTracker {
             // (так делает, например, штатный плеер Huawei). Держим оценку,
             // иначе позиция в событиях падает в начало трека.
             current.lastPositionMs = expected
-            current.lastPositionAtMs = nowMs
+            current.lastPositionMonoMs = time.monoMs
         } else if (phaseChanged) {
             // При смене фазы позиция может «отставать» от нашей экстраполяции:
             // это не перемотка, а пауза/возобновление. Просто берём новую базу.
             reported?.let {
                 current.lastPositionMs = it
-                current.lastPositionAtMs = nowMs
+                current.lastPositionMonoMs = time.monoMs
             }
         } else {
             val previous = current.lastPositionMs
@@ -215,7 +262,7 @@ class ListeningTracker {
                 val delta = reported - expected
                 if (abs(delta) > SEEK_THRESHOLD_MS) {
                     events += LogEvent(
-                        ts = nowMs,
+                        ts = time.wallMs,
                         type = "seek",
                         fields = linkedMapOf(
                             "trackKey" to current.key,
@@ -228,52 +275,78 @@ class ListeningTracker {
                     )
                 }
                 current.lastPositionMs = reported
-                current.lastPositionAtMs = nowMs
+                current.lastPositionMonoMs = time.monoMs
             } else if (reported != null && previous == null) {
                 current.lastPositionMs = reported
-                current.lastPositionAtMs = nowMs
+                current.lastPositionMonoMs = time.monoMs
             }
         }
 
         current.running = newPhase == MediaPhase.PLAYING
         current.snapshot = snapshot
 
-        return TickResult(events, liveTrack(nowMs, volume, volumeMax))
+        return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
+    }
+
+    /**
+     * Контрольная точка активного трека: раз в минуту во время PLAYING и один
+     * раз при переходе в PAUSED/STOPPED. Служба добавляет событие в свою пачку.
+     */
+    fun checkpoint(
+        time: TickTime,
+        volume: Int,
+        volumeMax: Int,
+    ): LogEvent? {
+        val current = active ?: return null
+        val phase = current.snapshot.phase
+        val due = current.running &&
+            phase == MediaPhase.PLAYING &&
+            time.monoMs - current.lastCheckpointMonoMs >= CHECKPOINT_INTERVAL_MS
+        val becameInactive = phase != MediaPhase.PLAYING &&
+            current.lastCheckpointPhase == MediaPhase.PLAYING
+
+        current.lastCheckpointPhase = phase
+        if (!due && !becameInactive) return null
+
+        current.lastCheckpointMonoMs = time.monoMs
+        return progressEvent(current, time, volume, volumeMax)
     }
 
     /** Закрыть текущий трек, например при остановке службы. */
     fun finish(
-        nowMs: Long = System.currentTimeMillis(),
+        time: TickTime,
         reason: String = "service_stopped",
     ): List<LogEvent> {
         val current = active ?: return emptyList()
-        accumulate(current, nowMs)
-        val event = endEvent(current, nowMs, next = null, explicitReason = reason)
+        accumulate(current, time.monoMs)
+        val event = endEvent(current, time, next = null, explicitReason = reason)
         active = null
         return listOf(event)
     }
 
-    private fun start(nowMs: Long, snapshot: MediaSnapshot, volume: Int): Active = Active(
+    private fun start(time: TickTime, snapshot: MediaSnapshot, volume: Int): Active = Active(
         key = snapshot.trackKey,
         snapshot = snapshot,
-        startedAtMs = nowMs,
+        startedAtWallMs = time.wallMs,
         playedMs = 0L,
         running = snapshot.phase == MediaPhase.PLAYING,
-        lastTickAtMs = nowMs,
-        lastSeenAtMs = nowMs,
+        lastTickMonoMs = time.monoMs,
+        lastSeenMonoMs = time.monoMs,
         lastPositionMs = snapshot.positionMs,
-        lastPositionAtMs = nowMs,
+        lastPositionMonoMs = time.monoMs,
         volumeStart = volume,
         volumeLow = volume,
         volumeHigh = volume,
         volumeChanges = 0,
+        lastCheckpointMonoMs = time.monoMs,
+        lastCheckpointPhase = snapshot.phase,
     )
 
-    private fun accumulate(active: Active, nowMs: Long) {
+    private fun accumulate(active: Active, monoMs: Long) {
         if (active.running) {
-            active.playedMs += (nowMs - active.lastTickAtMs).coerceAtLeast(0)
+            active.playedMs += (monoMs - active.lastTickMonoMs).coerceAtLeast(0)
         }
-        active.lastTickAtMs = nowMs
+        active.lastTickMonoMs = monoMs
     }
 
     /**
@@ -286,22 +359,22 @@ class ListeningTracker {
             reported <= POSITION_RESET_MAX_MS &&
             expected > SEEK_THRESHOLD_MS
 
-    private fun expectedPosition(active: Active, nowMs: Long): Long {
+    private fun expectedPosition(active: Active, monoMs: Long): Long {
         val base = active.lastPositionMs ?: 0L
         if (!active.running) return base
-        val elapsed = (nowMs - active.lastPositionAtMs).coerceAtLeast(0)
+        val elapsed = (monoMs - active.lastPositionMonoMs).coerceAtLeast(0)
         return base + (elapsed * active.snapshot.speed).roundToLong()
     }
 
-    private fun extrapolatePosition(active: Active, nowMs: Long): Long? {
+    private fun extrapolatePosition(active: Active, monoMs: Long): Long? {
         val base = active.lastPositionMs ?: return null
         if (!active.running) return base
-        val elapsed = (nowMs - active.lastPositionAtMs).coerceAtLeast(0)
+        val elapsed = (monoMs - active.lastPositionMonoMs).coerceAtLeast(0)
         return base + (elapsed * active.snapshot.speed).roundToLong()
     }
 
-    private fun startEvent(active: Active, nowMs: Long): LogEvent = LogEvent(
-        ts = nowMs,
+    private fun startEvent(active: Active, wallMs: Long): LogEvent = LogEvent(
+        ts = wallMs,
         type = "track_started",
         fields = linkedMapOf(
             "trackKey" to active.key,
@@ -323,13 +396,37 @@ class ListeningTracker {
         ),
     )
 
+    private fun progressEvent(
+        active: Active,
+        time: TickTime,
+        volume: Int,
+        volumeMax: Int,
+    ): LogEvent = LogEvent(
+        ts = time.wallMs,
+        type = "track_progress",
+        fields = linkedMapOf(
+            "trackKey" to active.key,
+            "package" to active.snapshot.packageName,
+            "source" to active.snapshot.source,
+            "title" to active.snapshot.title,
+            "artist" to active.snapshot.artist,
+            "positionMs" to extrapolatePosition(active, time.monoMs),
+            "playedMs" to active.playedMs,
+            "durationMs" to active.snapshot.durationMs,
+            "volume" to volume,
+            "volumeMax" to volumeMax.takeIf { it > 0 },
+            "phase" to active.snapshot.phase.name.lowercase(),
+            "startedAt" to active.startedAtWallMs,
+        ),
+    )
+
     private fun endEvent(
         active: Active,
-        nowMs: Long,
+        time: TickTime,
         next: MediaSnapshot?,
         explicitReason: String?,
     ): LogEvent {
-        val endPosition = extrapolatePosition(active, nowMs)
+        val endPosition = extrapolatePosition(active, time.monoMs)
         val duration = active.snapshot.durationMs
         val completed = duration != null && (
             (endPosition != null && endPosition >= duration - COMPLETE_SLACK_MS) ||
@@ -339,6 +436,7 @@ class ListeningTracker {
         val reason = when {
             explicitReason != null -> explicitReason
             completed -> "completed"
+            active.playedMs < NOT_PLAYED_MAX_MS -> "not_played"
             active.snapshot.phase == MediaPhase.STOPPED -> "stopped"
             next == null -> "session_lost"
             next.packageName == active.snapshot.packageName -> "skipped"
@@ -346,7 +444,7 @@ class ListeningTracker {
         }
 
         return LogEvent(
-            ts = nowMs,
+            ts = time.wallMs,
             type = "track_ended",
             fields = linkedMapOf(
                 "trackKey" to active.key,
@@ -361,7 +459,7 @@ class ListeningTracker {
                 "endPositionMs" to endPosition,
                 "endReason" to reason,
                 "completed" to (reason == "completed"),
-                "startedAt" to active.startedAtMs,
+                "startedAt" to active.startedAtWallMs,
                 "volumeStart" to active.volumeStart,
                 "volumeEnd" to lastVolume,
                 "volumeLow" to active.volumeLow,
@@ -374,7 +472,7 @@ class ListeningTracker {
         )
     }
 
-    private fun liveTrack(nowMs: Long, volume: Int, volumeMax: Int): LiveTrack? {
+    private fun liveTrack(monoMs: Long, volume: Int, volumeMax: Int): LiveTrack? {
         val active = active ?: return null
         return LiveTrack(
             key = active.key,
@@ -383,11 +481,11 @@ class ListeningTracker {
             artist = active.snapshot.artist,
             album = active.snapshot.album,
             durationMs = active.snapshot.durationMs,
-            positionMs = extrapolatePosition(active, nowMs),
+            positionMs = extrapolatePosition(active, monoMs),
             phase = active.snapshot.phase,
             volume = volume,
             volumeMax = volumeMax,
-            startedAtMs = active.startedAtMs,
+            startedAtMs = active.startedAtWallMs,
             playedMs = active.playedMs,
             mediaId = active.snapshot.mediaId,
             metadataKeys = active.snapshot.metadataKeys,
@@ -408,5 +506,11 @@ class ListeningTracker {
 
         /** Позиция на паузе ниже этого значения считается сбросом в ноль. */
         const val POSITION_RESET_MAX_MS = 1_000L
+
+        /** Слишком короткий трек не считаем настоящим прослушиванием. */
+        const val NOT_PLAYED_MAX_MS = 3_000L
+
+        /** Как часто писать контрольную точку активного трека. */
+        const val CHECKPOINT_INTERVAL_MS = 60_000L
     }
 }

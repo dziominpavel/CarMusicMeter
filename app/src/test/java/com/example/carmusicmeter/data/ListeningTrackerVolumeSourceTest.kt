@@ -7,6 +7,13 @@ import org.junit.Test
 
 class ListeningTrackerVolumeSourceTest {
 
+    private val baseWall = 1_700_000_000_000L
+
+    private fun t(monoMs: Long, wallMs: Long = baseWall + monoMs) = TickTime(
+        wallMs = wallMs,
+        monoMs = monoMs,
+    )
+
     private fun snap(title: String = "A") = MediaSnapshot(
         packageName = "com.example.player",
         title = title,
@@ -20,11 +27,11 @@ class ListeningTrackerVolumeSourceTest {
     @Test
     fun `смена источника не создаёт ложный delta и сбрасывает статистику`() {
         val tracker = ListeningTracker()
-        tracker.onTick(0, snap(), 10, 30, source = "audio")
-        tracker.onVolume(500, 12, 30, source = "audio")
-        tracker.onVolume(1_000, 4, 0, source = "mcu")
+        tracker.onTick(t(0), snap(), 10, 30, source = "audio")
+        tracker.onVolume(t(500), 12, 30, source = "audio")
+        tracker.onVolume(t(1_000), 4, 0, source = "mcu")
 
-        val events = tracker.onVolume(1_500, 5, 0, source = "mcu")
+        val events = tracker.onVolume(t(1_500), 5, 0, source = "mcu")
 
         assertEquals(1, events.size)
         assertEquals(5, events.first().fields["value"])
@@ -36,9 +43,9 @@ class ListeningTrackerVolumeSourceTest {
     @Test
     fun `неизвестный максимум не превращается в ноль`() {
         val tracker = ListeningTracker()
-        tracker.onVolume(0, 4, 0, source = "mcu")
+        tracker.onVolume(t(0), 4, 0, source = "mcu")
 
-        val events = tracker.onVolume(500, 5, 0, source = "mcu")
+        val events = tracker.onVolume(t(500), 5, 0, source = "mcu")
 
         assertEquals(1, events.size)
         assertNull(events.first().fields["max"])
@@ -48,8 +55,8 @@ class ListeningTrackerVolumeSourceTest {
     @Test
     fun `события трека содержат источник и источник громкости`() {
         val tracker = ListeningTracker()
-        tracker.onVolume(0, 4, 0, source = "mcu")
-        val events = tracker.onTick(0, snap(), 4, 0, source = "mcu").events
+        tracker.onVolume(t(0), 4, 0, source = "mcu")
+        val events = tracker.onTick(t(0), snap(), 4, 0, source = "mcu").events
 
         val started = events.single { it.type == "track_started" }
         assertEquals(StockPlayerSources.FYT_BROADCAST, started.fields["source"])

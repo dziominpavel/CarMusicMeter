@@ -92,6 +92,7 @@ fun ProbeScreen(
             onOpenNotificationAccess = onOpenNotificationAccess,
             onOpenBatterySettings = onOpenBatterySettings,
         )
+        CaptureHealthCard(state)
         LiveCard(state)
         StockPlayerCard(state = state, onOpenAccessibilitySettings = onOpenAccessibilitySettings)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -182,6 +183,57 @@ private fun StatusCard(
                 actionLabel = "Настроить",
                 onAction = onOpenBatterySettings,
             )
+        }
+    }
+}
+
+@Composable
+private fun CaptureHealthCard(state: LiveState) {
+    val error = state.captureError
+    val ok = error == null
+    Card(
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Box(
+                modifier = Modifier
+                    .padding(top = 5.dp)
+                    .size(9.dp)
+                    .background(if (ok) StatusOk else StatusWarn, CircleShape),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Сбор данных",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = if (ok) "идёт" else "ошибка: $error",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (ok) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                )
+                val lastSuccess = state.lastSuccessAt
+                Text(
+                    text = if (lastSuccess != null) {
+                        "последний успешный тик: ${formatClock(lastSuccess)}"
+                    } else {
+                        "успешных тиков ещё не было"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (state.captureFailures > 0 || state.droppedEvents > 0) {
+                    Text(
+                        text = "подряд ошибок: ${state.captureFailures} · потеряно событий: ${state.droppedEvents}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (state.droppedEvents > 0) StatusWarn else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     }
 }
@@ -607,7 +659,7 @@ private fun CompactChip(
     }
     Surface(
         onClick = onClick,
-        modifier = modifier.height(38.dp),
+        modifier = modifier.height(48.dp),
         shape = RoundedCornerShape(10.dp),
         color = background,
         border = BorderStroke(

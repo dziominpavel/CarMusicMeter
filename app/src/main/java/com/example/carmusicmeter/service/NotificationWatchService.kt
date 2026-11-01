@@ -12,6 +12,11 @@ import com.example.carmusicmeter.data.StockPlayerParser
 import com.example.carmusicmeter.data.StockPlayerProtocol
 import com.example.carmusicmeter.probe.NotificationCache
 import com.example.carmusicmeter.probe.NotificationTextExtractor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * Доступ к уведомлениям нужен по двум причинам:
@@ -23,6 +28,7 @@ class NotificationWatchService : NotificationListenerService() {
 
     private val lastSignatureByPackage = mutableMapOf<String, String>()
     private val lastRemoteExtractAt = mutableMapOf<String, Long>()
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val app: CarMusicMeterApp get() = application as CarMusicMeterApp
 
@@ -41,6 +47,11 @@ class NotificationWatchService : NotificationListenerService() {
             LogEvent(System.currentTimeMillis(), "notification_listener_disconnected"),
         )
         super.onListenerDisconnected()
+    }
+
+    override fun onDestroy() {
+        ioScope.cancel()
+        super.onDestroy()
     }
 
     @Suppress("DEPRECATION")
@@ -62,6 +73,7 @@ class NotificationWatchService : NotificationListenerService() {
             ?.filter { it.isNotEmpty() }
             .orEmpty()
         val now = System.currentTimeMillis()
+        val nowMono = android.os.SystemClock.elapsedRealtime()
         val extras = if (stock) NotificationTextExtractor.extras(notification) else emptyMap()
         val remoteTexts = if (stock && now - (lastRemoteExtractAt[sbn.packageName] ?: 0L) >= 2_000L) {
             lastRemoteExtractAt[sbn.packageName] = now
@@ -70,20 +82,33 @@ class NotificationWatchService : NotificationListenerService() {
             emptyList()
         }
 
-        val signature = listOf(
-            sbn.packageName,
-            title,
-            text,
-            bigText,
-            subText,
-            template,
-            actions,
-            mediaLike,
-            extras,
-            remoteTexts,
-        ).joinToString("|")
+        val stockState = if (stock) {
+            StockPlayerParser.fromNotification(
+                packageName = sbn.packageName,
+                title = title ?: remoteTexts.firstOrNull(),
+                text = text ?: remoteTexts.getOrNull(1),
+                remoteTexts = remoteTexts,
+                nowMs = now,
+                nowMonoMs = nowMono,
+            )
+        } else {
+            null
+        }
+
+        // Прогресс в text/subText и сырые RemoteViews не входят в сигнатуру:
+        // обновление позиции не должно создавать событие каждую секунду.
+        val signature = com.example.carmusicmeter.data.NotificationSignature.build(
+            packageName = sbn.packageName,
+            title = title,
+            bigText = bigText,
+            template = template,
+            actions = actions,
+            mediaLike = mediaLike,
+            stockSignature = stockState?.metaSignature,
+        )
         if (lastSignatureByPackage[sbn.packageName] == signature) return
         lastSignatureByPackage[sbn.packageName] = signature
+        if (!mediaLike && !stock) return
 
         val ts = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis()
         val fields = linkedMapOf<String, Any?>(
@@ -106,22 +131,17 @@ class NotificationWatchService : NotificationListenerService() {
                 notification.bigContentView != null
             if (extras.isNotEmpty()) fields["extras"] = extras
             if (remoteTexts.isNotEmpty()) fields["remoteTexts"] = remoteTexts
-            StockPlayerParser.fromNotification(
-                packageName = sbn.packageName,
-                title = title ?: remoteTexts.firstOrNull(),
-                text = text ?: remoteTexts.getOrNull(1),
-                remoteTexts = remoteTexts,
-                nowMs = now,
-            )?.let(StockPlayerBridge::update)
+            stockState?.let(StockPlayerBridge::update)
         }
 
         NotificationCache.add(Json.objectFrom(fields, ts = ts, type = "notification"))
-        if (!mediaLike && !stock) return
 
         if (mediaLike) {
             val event = LogEvent(ts, "notification", fields)
-            app.eventLog.append(event)
-            ListeningRepository.record(listOf(event))
+            ioScope.launch {
+                app.eventLog.append(event)
+                ListeningRepository.record(listOf(event))
+            }
         }
         maybeStartWatch()
     }

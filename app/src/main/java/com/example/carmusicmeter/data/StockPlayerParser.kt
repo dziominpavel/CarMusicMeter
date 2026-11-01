@@ -32,6 +32,7 @@ object StockPlayerParser {
         extras: Map<String, Any?>,
         nowMs: Long,
         packageName: String,
+        nowMonoMs: Long = nowMs,
     ): StockPlayerState? {
         val title = string(extras[StockPlayerProtocol.EXTRA_TITLE])
             ?.takeIf(::isPlausibleTitle)
@@ -42,7 +43,9 @@ object StockPlayerParser {
             ?.takeIf { it.isNotBlank() && !it.equals("unknown", true) }
         val path = string(extras[StockPlayerProtocol.EXTRA_PATH])
             ?.takeIf { it.isNotBlank() }
-        val playing = boolean(extras[StockPlayerProtocol.EXTRA_PLAYING])
+        val playState = extras[StockPlayerProtocol.EXTRA_PLAYING]
+        val playing = boolean(playState)
+        val playingKnown = playState != null
         val duration = long(extras[StockPlayerProtocol.EXTRA_DURATION])?.takeIf { it > 0 }
         val position = long(extras[StockPlayerProtocol.EXTRA_POSITION])?.takeIf { it >= 0 }
 
@@ -55,8 +58,10 @@ object StockPlayerParser {
             durationMs = duration,
             positionMs = position,
             playing = playing,
+            playingKnown = playingKnown,
             source = StockPlayerSources.FYT_BROADCAST,
             updatedAtMs = nowMs,
+            updatedAtMonoMs = nowMonoMs,
             rawTexts = listOfNotNull(title, artist, album).distinct(),
             extras = extras.mapValues { (_, value) -> value?.toString() ?: "" },
         )
@@ -67,6 +72,7 @@ object StockPlayerParser {
         texts: List<String>,
         playing: Boolean,
         nowMs: Long,
+        nowMonoMs: Long = nowMs,
     ): StockPlayerState? {
         val candidates = candidates(texts)
         if (candidates.isEmpty()) return null
@@ -76,8 +82,10 @@ object StockPlayerParser {
             title = title,
             artist = artist,
             playing = playing,
+            playingKnown = true,
             source = StockPlayerSources.ACCESSIBILITY,
             updatedAtMs = nowMs,
+            updatedAtMonoMs = nowMonoMs,
             rawTexts = candidates,
         )
     }
@@ -88,6 +96,7 @@ object StockPlayerParser {
         text: String?,
         remoteTexts: List<String>,
         nowMs: Long,
+        nowMonoMs: Long = nowMs,
     ): StockPlayerState? {
         val candidates = candidates(listOfNotNull(title, text) + remoteTexts)
         if (candidates.isEmpty()) return null
@@ -97,8 +106,10 @@ object StockPlayerParser {
             title = resolvedTitle,
             artist = artist,
             playing = true,
+            playingKnown = false,
             source = StockPlayerSources.NOTIFICATION,
             updatedAtMs = nowMs,
+            updatedAtMonoMs = nowMonoMs,
             rawTexts = candidates,
         )
     }

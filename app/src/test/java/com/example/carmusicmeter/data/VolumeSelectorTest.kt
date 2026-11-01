@@ -35,14 +35,14 @@ class VolumeSelectorTest {
     }
 
     @Test
-    fun `mute даёт ноль и признак muted`() {
+    fun `mute сохраняет абсолютную громкость и признак muted`() {
         val reading = VolumeSelector.select(
             mcu = McuVolume(volume = 4, muted = true, updatedAtMs = 1),
             audioValue = 25,
             audioMax = 25,
         )
 
-        assertEquals(0, reading.value)
+        assertEquals(4, reading.value)
         assertTrue(reading.muted)
         assertEquals(VolumeSource.MCU, reading.source)
     }
