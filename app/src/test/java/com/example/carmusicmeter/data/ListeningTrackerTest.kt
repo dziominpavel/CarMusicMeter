@@ -366,4 +366,20 @@ class ListeningTrackerTest {
             SnapshotPicker.pick(listOf(snap(title = "", positionMs = 1_000)), null),
         )
     }
+
+    @Test
+    fun `потеря accessibility окна закрывает трек как session_lost`() {
+        val tracker = ListeningTracker()
+        val state = snap(
+            "A",
+            durationMs = null,
+            source = StockPlayerSources.ACCESSIBILITY,
+        )
+
+        tracker.onTick(t(0), state, 4, 43)
+        tracker.onTick(t(4_000), null, 4, 43)
+        val events = tracker.onTick(t(6_000), null, 4, 43).events
+
+        assertEquals("session_lost", events.single { it.type == "track_ended" }.fields["endReason"])
+    }
 }

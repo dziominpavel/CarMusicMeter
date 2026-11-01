@@ -15,6 +15,15 @@ import kotlin.math.roundToLong
  */
 class ListeningTracker {
 
+    private data class VolumeSegment(
+        var start: Int,
+        var low: Int,
+        var high: Int,
+        var end: Int,
+        var max: Int,
+        var changes: Int,
+    )
+
     private data class Active(
         val key: String,
         var snapshot: MediaSnapshot,
@@ -29,6 +38,8 @@ class ListeningTracker {
         var volumeLow: Int,
         var volumeHigh: Int,
         var volumeChanges: Int,
+        var volumeMax: Int,
+        val volumeStats: MutableMap<String, VolumeSegment>,
         var lastCheckpointMonoMs: Long,
         var lastCheckpointPhase: MediaPhase,
     )
@@ -57,6 +68,7 @@ class ListeningTracker {
         volumeMax: Int,
         source: String = "audio",
         muted: Boolean = false,
+        sourceReason: String? = null,
     ): List<LogEvent> {
         val previous = lastVolume
         val previousMax = lastVolumeMax
@@ -64,23 +76,22 @@ class ListeningTracker {
         val previousMuted = lastMuted
 
         if (previousSource != null && previousSource != source) {
-            lastVolume = volume
-            lastVolumeMax = volumeMax
-            lastVolumeSource = source
-            lastMuted = muted
-            active?.let {
-                it.volumeStart = volume
-                it.volumeLow = volume
-                it.volumeHigh = volume
-                it.volumeChanges = 0
-            }
-            return emptyList()
+            val event = volumeSourceChanged(
+                time = time,
+                from = previousSource,
+                to = source,
+                fromValue = previous,
+                toValue = volume,
+                fromMax = previousMax,
+                toMax = volumeMax,
+                sourceReason = sourceReason,
+            )
+            updateLastVolume(volume, volumeMax, source, muted)
+            active?.let { startVolumeSegment(it, source, volume, volumeMax) }
+            return listOf(event)
         }
 
-        lastVolume = volume
-        lastVolumeMax = volumeMax
-        lastVolumeSource = source
-        lastMuted = muted
+        updateLastVolume(volume, volumeMax, source, muted)
         if (previous == null || previousMax == null) return emptyList()
 
         val volumeChanged = previous != volume || previousMax != volumeMax
@@ -89,11 +100,7 @@ class ListeningTracker {
 
         val current = active
         if (volumeChanged) {
-            current?.let {
-                it.volumeChanges += 1
-                it.volumeLow = minOf(it.volumeLow, volume)
-                it.volumeHigh = maxOf(it.volumeHigh, volume)
-            }
+            current?.let { recordVolumeChange(it, source, volume, volumeMax) }
         }
 
         val events = mutableListOf<LogEvent>()
@@ -109,6 +116,7 @@ class ListeningTracker {
                     "delta" to (volume - previous),
                     "level" to if (volumeMax > 0) volume.toDouble() / volumeMax else null,
                     "source" to source,
+                    "sourceReason" to (sourceReason ?: "unspecified"),
                     "muted" to muted,
                     "trackKey" to current?.key,
                     "title" to current?.snapshot?.title,
@@ -126,6 +134,7 @@ class ListeningTracker {
                     "volume" to volume,
                     "volumeMax" to volumeMax.takeIf { it > 0 },
                     "source" to source,
+                    "sourceReason" to (sourceReason ?: "unspecified"),
                     "trackKey" to current?.key,
                     "title" to current?.snapshot?.title,
                     "artist" to current?.snapshot?.artist,
@@ -142,32 +151,34 @@ class ListeningTracker {
         volumeMax: Int,
         source: String = "audio",
         muted: Boolean = false,
+        sourceReason: String? = null,
     ): TickResult {
-        if (lastVolumeSource != null && lastVolumeSource != source) {
-            lastVolume = volume
-            lastVolumeMax = volumeMax
-            lastVolumeSource = source
-            lastMuted = muted
-            active?.let {
-                it.volumeStart = volume
-                it.volumeLow = volume
-                it.volumeHigh = volume
-                it.volumeChanges = 0
-            }
-        }
-        if (lastVolume == null) {
-            lastVolume = volume
-            lastVolumeMax = volumeMax
-            lastVolumeSource = source
-            lastMuted = muted
+        val events = mutableListOf<LogEvent>()
+        val previousSource = lastVolumeSource
+        val previousVolume = lastVolume
+        val previousMax = lastVolumeMax
+        if (previousSource != null && previousSource != source) {
+            events += volumeSourceChanged(
+                time = time,
+                from = previousSource,
+                to = source,
+                fromValue = previousVolume,
+                toValue = volume,
+                fromMax = previousMax,
+                toMax = volumeMax,
+                sourceReason = sourceReason,
+            )
+            updateLastVolume(volume, volumeMax, source, muted)
+            active?.let { startVolumeSegment(it, source, volume, volumeMax) }
+        } else if (lastVolume == null) {
+            updateLastVolume(volume, volumeMax, source, muted)
         }
 
-        val events = mutableListOf<LogEvent>()
         var current = active
 
         if (current == null) {
             if (snapshot != null && snapshot.phase == MediaPhase.PLAYING) {
-                current = start(time, snapshot, volume)
+                current = start(time, snapshot, volume, volumeMax, source)
                 active = current
                 events += startEvent(current, time.wallMs)
             }
@@ -188,7 +199,7 @@ class ListeningTracker {
 
         if (!current.snapshot.sameTrack(snapshot)) {
             events += endEvent(current, time, next = snapshot, explicitReason = null)
-            val next = start(time, snapshot, volume)
+            val next = start(time, snapshot, volume, volumeMax, source)
             active = next
             events += startEvent(next, time.wallMs)
             return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
@@ -209,7 +220,7 @@ class ListeningTracker {
 
         if (repeated) {
             events += endEvent(current, time, next = snapshot, explicitReason = null)
-            val next = start(time, snapshot, volume)
+            val next = start(time, snapshot, volume, volumeMax, source)
             active = next
             events += startEvent(next, time.wallMs)
             return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
@@ -324,23 +335,119 @@ class ListeningTracker {
         return listOf(event)
     }
 
-    private fun start(time: TickTime, snapshot: MediaSnapshot, volume: Int): Active = Active(
-        key = snapshot.trackKey,
-        snapshot = snapshot,
-        startedAtWallMs = time.wallMs,
-        playedMs = 0L,
-        running = snapshot.phase == MediaPhase.PLAYING,
-        lastTickMonoMs = time.monoMs,
-        lastSeenMonoMs = time.monoMs,
-        lastPositionMs = snapshot.positionMs,
-        lastPositionMonoMs = time.monoMs,
-        volumeStart = volume,
-        volumeLow = volume,
-        volumeHigh = volume,
-        volumeChanges = 0,
-        lastCheckpointMonoMs = time.monoMs,
-        lastCheckpointPhase = snapshot.phase,
-    )
+    private fun start(
+        time: TickTime,
+        snapshot: MediaSnapshot,
+        volume: Int,
+        volumeMax: Int,
+        source: String,
+    ): Active {
+        val segment = VolumeSegment(
+            start = volume,
+            low = volume,
+            high = volume,
+            end = volume,
+            max = volumeMax,
+            changes = 0,
+        )
+        return Active(
+            key = snapshot.trackKey,
+            snapshot = snapshot,
+            startedAtWallMs = time.wallMs,
+            playedMs = 0L,
+            running = snapshot.phase == MediaPhase.PLAYING,
+            lastTickMonoMs = time.monoMs,
+            lastSeenMonoMs = time.monoMs,
+            lastPositionMs = snapshot.positionMs,
+            lastPositionMonoMs = time.monoMs,
+            volumeStart = volume,
+            volumeLow = volume,
+            volumeHigh = volume,
+            volumeChanges = 0,
+            volumeMax = volumeMax,
+            volumeStats = mutableMapOf(source to segment),
+            lastCheckpointMonoMs = time.monoMs,
+            lastCheckpointPhase = snapshot.phase,
+        )
+    }
+
+    private fun updateLastVolume(volume: Int, volumeMax: Int, source: String, muted: Boolean) {
+        lastVolume = volume
+        lastVolumeMax = volumeMax
+        lastVolumeSource = source
+        lastMuted = muted
+    }
+
+    private fun startVolumeSegment(active: Active, source: String, volume: Int, volumeMax: Int) {
+        val segment = active.volumeStats[source]
+        if (segment == null) {
+            active.volumeStats[source] = VolumeSegment(
+                start = volume,
+                low = volume,
+                high = volume,
+                end = volume,
+                max = volumeMax,
+                changes = 0,
+            )
+        } else {
+            // Источник вернулся: сохраняем его прежний диапазон и число изменений.
+            segment.end = volume
+            segment.low = minOf(segment.low, volume)
+            segment.high = maxOf(segment.high, volume)
+            segment.max = volumeMax
+        }
+        val current = active.volumeStats.getValue(source)
+        active.volumeStart = current.start
+        active.volumeLow = current.low
+        active.volumeHigh = current.high
+        active.volumeChanges = current.changes
+        active.volumeMax = volumeMax
+    }
+
+    private fun recordVolumeChange(active: Active, source: String, volume: Int, volumeMax: Int) {
+        val segment = active.volumeStats.getOrPut(source) {
+            VolumeSegment(volume, volume, volume, volume, volumeMax, 0)
+        }
+        segment.end = volume
+        segment.low = minOf(segment.low, volume)
+        segment.high = maxOf(segment.high, volume)
+        segment.max = volumeMax
+        segment.changes += 1
+        active.volumeStart = segment.start
+        active.volumeLow = segment.low
+        active.volumeHigh = segment.high
+        active.volumeChanges = segment.changes
+        active.volumeMax = volumeMax
+    }
+
+    private fun volumeSourceChanged(
+        time: TickTime,
+        from: String,
+        to: String,
+        fromValue: Int?,
+        toValue: Int,
+        fromMax: Int?,
+        toMax: Int,
+        sourceReason: String?,
+    ): LogEvent {
+        val current = active
+        return LogEvent(
+            ts = time.wallMs,
+            type = "volume_source_changed",
+            fields = linkedMapOf(
+                "from" to from,
+                "to" to to,
+                "fromValue" to fromValue,
+                "toValue" to toValue,
+                "fromMax" to fromMax?.takeIf { it > 0 },
+                "toMax" to toMax.takeIf { it > 0 },
+                "sourceReason" to (sourceReason ?: "unspecified"),
+                "trackKey" to current?.key,
+                "title" to current?.snapshot?.title,
+                "artist" to current?.snapshot?.artist,
+            ),
+        )
+    }
 
     private fun accumulate(active: Active, monoMs: Long) {
         if (active.running) {
@@ -389,6 +496,7 @@ class ListeningTracker {
             "positionMs" to active.snapshot.positionMs,
             "phase" to active.snapshot.phase.name.lowercase(),
             "volume" to active.volumeStart,
+            "volumeMax" to active.volumeMax.takeIf { it > 0 },
             "volumeSource" to lastVolumeSource,
             "actions" to active.snapshot.actions,
             "metadataKeys" to active.snapshot.metadataKeys,
@@ -415,6 +523,7 @@ class ListeningTracker {
             "durationMs" to active.snapshot.durationMs,
             "volume" to volume,
             "volumeMax" to volumeMax.takeIf { it > 0 },
+            "volumeSource" to lastVolumeSource,
             "phase" to active.snapshot.phase.name.lowercase(),
             "startedAt" to active.startedAtWallMs,
         ),
@@ -439,6 +548,7 @@ class ListeningTracker {
             active.playedMs < NOT_PLAYED_MAX_MS -> "not_played"
             active.snapshot.phase == MediaPhase.STOPPED -> "stopped"
             next == null -> "session_lost"
+            active.snapshot.source == StockPlayerSources.ACCESSIBILITY && duration == null -> "unknown"
             next.packageName == active.snapshot.packageName -> "skipped"
             else -> "interrupted"
         }
@@ -465,7 +575,18 @@ class ListeningTracker {
                 "volumeLow" to active.volumeLow,
                 "volumeHigh" to active.volumeHigh,
                 "volumeChanges" to active.volumeChanges,
+                "volumeMax" to active.volumeMax.takeIf { it > 0 },
                 "volumeSource" to lastVolumeSource,
+                "volumeStats" to active.volumeStats.mapValues { (_, segment) ->
+                    mapOf(
+                        "start" to segment.start,
+                        "low" to segment.low,
+                        "high" to segment.high,
+                        "end" to segment.end,
+                        "max" to segment.max.takeIf { it > 0 },
+                        "changes" to segment.changes,
+                    )
+                },
                 "nextPackage" to next?.packageName,
                 "nextTitle" to next?.title,
             ),

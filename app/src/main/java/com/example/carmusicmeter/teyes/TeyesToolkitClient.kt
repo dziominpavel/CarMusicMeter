@@ -30,8 +30,13 @@ class TeyesToolkitClient(private val context: Context) {
         val error: String? = null,
         val updatedAtMs: Long = 0L,
     ) {
+        /**
+         * Громкость и mute сюда не входят: их изменения уже пишутся
+         * `volume_changed`/`mute_changed`, а toolkit-событие должно отмечать
+         * только состояние подключения и ошибку.
+         */
         val signature: String
-            get() = listOf(available, connected, module, volume, muted, error).joinToString("|")
+            get() = listOf(available, connected, module, error).joinToString("|")
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -186,14 +191,29 @@ class TeyesToolkitClient(private val context: Context) {
     }
 
     /** Свежее значение для выбора громкости; null — используем AudioManager. */
-    fun reading(nowMs: Long = System.currentTimeMillis()): McuVolume? {
+    fun reading(nowMs: Long = System.currentTimeMillis()): McuVolume {
         val current = status
-        if (!current.module || current.volume == null) return null
-        if (current.updatedAtMs > 0 && nowMs - current.updatedAtMs > STALE_MS) return null
+        if (!current.module || current.volume == null) {
+            return McuVolume(
+                volume = null,
+                muted = current.muted,
+                updatedAtMs = current.updatedAtMs,
+                reason = if (!current.module) "mcu_unavailable" else "mcu_error",
+            )
+        }
+        if (current.updatedAtMs > 0 && nowMs - current.updatedAtMs > STALE_MS) {
+            return McuVolume(
+                volume = null,
+                muted = current.muted,
+                updatedAtMs = current.updatedAtMs,
+                reason = "mcu_stale",
+            )
+        }
         return McuVolume(
             volume = current.volume,
             muted = current.muted,
             updatedAtMs = current.updatedAtMs,
+            reason = "mcu_available",
         )
     }
 

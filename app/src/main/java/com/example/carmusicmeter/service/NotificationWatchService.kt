@@ -6,6 +6,7 @@ import android.service.notification.StatusBarNotification
 import com.example.carmusicmeter.CarMusicMeterApp
 import com.example.carmusicmeter.data.Json
 import com.example.carmusicmeter.data.ListeningRepository
+import com.example.carmusicmeter.data.NotificationListenerStatus
 import com.example.carmusicmeter.data.LogEvent
 import com.example.carmusicmeter.data.StockPlayerBridge
 import com.example.carmusicmeter.data.StockPlayerParser
@@ -34,6 +35,7 @@ class NotificationWatchService : NotificationListenerService() {
 
     override fun onListenerConnected() {
         super.onListenerConnected()
+        NotificationListenerStatus.connected = true
         ListeningRepository.setNotificationAccess(true)
         app.eventLog.append(
             LogEvent(System.currentTimeMillis(), "notification_listener_connected"),
@@ -42,6 +44,7 @@ class NotificationWatchService : NotificationListenerService() {
     }
 
     override fun onListenerDisconnected() {
+        NotificationListenerStatus.connected = false
         ListeningRepository.setNotificationAccess(false)
         app.eventLog.append(
             LogEvent(System.currentTimeMillis(), "notification_listener_disconnected"),
@@ -50,6 +53,7 @@ class NotificationWatchService : NotificationListenerService() {
     }
 
     override fun onDestroy() {
+        NotificationListenerStatus.connected = false
         ioScope.cancel()
         super.onDestroy()
     }

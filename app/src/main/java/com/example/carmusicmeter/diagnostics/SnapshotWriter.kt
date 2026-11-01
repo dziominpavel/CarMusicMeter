@@ -10,8 +10,11 @@ import com.example.carmusicmeter.data.AudioDiagnostics
 import com.example.carmusicmeter.data.Json
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.LiveTrack
+import com.example.carmusicmeter.data.NotificationListenerStatus
+import com.example.carmusicmeter.data.SnapshotDiagnostics
 import com.example.carmusicmeter.data.StockPlayerBridge
 import com.example.carmusicmeter.data.StockPlayerState
+import com.example.carmusicmeter.data.StockPlayerUiStore
 import com.example.carmusicmeter.probe.MediaSessionProbe
 import com.example.carmusicmeter.probe.NotificationCache
 import org.json.JSONArray
@@ -67,7 +70,10 @@ class SnapshotWriter(
                 put("android", Build.VERSION.RELEASE)
                 put("sdk", Build.VERSION.SDK_INT)
             })
-            put("notificationAccess", probe.hasNotificationAccess())
+            SnapshotDiagnostics.notificationFlags(
+                accessGranted = probe.hasNotificationAccess(),
+                listenerConnected = NotificationListenerStatus.connected,
+            ).forEach { (key, value) -> put(key, value) }
             put("accessibilityEnabled", state.accessibilityEnabled)
             put("serviceRunning", state.serviceRunning)
             put("volume", JSONObject().apply {
@@ -87,6 +93,7 @@ class SnapshotWriter(
                 put("error", Json.toJsonValue(state.teyesError))
             })
             put("stockPlayer", StockPlayerBridge.latest()?.toJson() ?: JSONObject.NULL)
+            put("stockPlayerUi", StockPlayerUiStore.toJson())
             put("packages", installedPackages())
             AudioDiagnostics.snapshot(
                 volume = { runCatching { audio.getStreamVolume(it) }.getOrDefault(-1) },

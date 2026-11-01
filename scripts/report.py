@@ -28,6 +28,9 @@ SESSION_GAP_MS = 10 * 60 * 1000
 POSITION_RESET_MAX_MS = 1_000
 POSITION_RESET_MIN_PLAYED_MS = 5_000
 RATED_REASONS = {"completed", "skipped", "interrupted"}
+CENSORED_REASONS = {
+    "service_stopped", "session_lost", "not_played", "stopped", "unknown",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -224,6 +227,7 @@ def new_track(key: str) -> dict:
         "starts": [],
         "plays": [],
         "last_pause": None,
+        "unknown": 0,
         "vol_changes": 0,
         "vol_up": 0,
         "vol_down": 0,
@@ -329,6 +333,7 @@ def analyze(events: list[dict], session_gap_ms: int):
                 "ts": ts,
                 "volume": event.get("volume"),
                 "duration": event.get("durationMs"),
+                "source": event.get("source") or "media_session",
                 "session": event["_session"],
             }
             track["starts"].append(info)
@@ -352,6 +357,7 @@ def analyze(events: list[dict], session_gap_ms: int):
                 "duration": duration,
                 "end_pos": end_pos,
                 "reason": event.get("endReason"),
+                "source": event.get("source") or start.get("source") or "media_session",
                 "vol_start": event.get("volumeStart", start.get("volume")),
                 "vol_end": event.get("volumeEnd", last_volume),
                 "session": start.get("session", event["_session"]),
@@ -440,6 +446,7 @@ def analyze(events: list[dict], session_gap_ms: int):
         session_lost = sum(1 for play in closed if play["reason"] == "session_lost")
         not_played = sum(1 for play in closed if play["reason"] == "not_played")
         stopped = sum(1 for play in closed if play["reason"] == "stopped")
+        unknown = sum(1 for play in closed if play["reason"] == "unknown")
         rated_plays = sum(1 for play in closed if play["reason"] in RATED_REASONS)
         early = sum(1 for point in skip_points if point < 0.25)
         played_total = sum(play["played"] for play in closed)
@@ -468,6 +475,7 @@ def analyze(events: list[dict], session_gap_ms: int):
             "session_lost": session_lost,
             "not_played": not_played,
             "stopped": stopped,
+            "unknown": unknown,
             "played_ms": played_total,
             "duration_ms": track_duration,
             "completion": statistics.mean(completions) if completions else None,
@@ -489,6 +497,55 @@ def analyze(events: list[dict], session_gap_ms: int):
 
     metrics.sort(key=lambda item: (-item["plays"], -(item["played_ms"] or 0)))
     return metrics, sessions, medians, position_resets
+
+
+def source_summary(events: list[dict]) -> dict[str, dict]:
+    """Считает начала и окончания по источникам, не смешивая их."""
+    stats: dict[str, dict] = {}
+    for event in events:
+        event_type = event.get("type")
+        if event_type not in ("track_started", "track_ended"):
+            continue
+        source = event.get("source") or "media_session"
+        item = stats.setdefault(source, {
+            "starts": 0,
+            "closed": 0,
+            "rated": 0,
+            "completed": 0,
+            "skipped": 0,
+            "interrupted": 0,
+            "unknown": 0,
+            "censored": 0,
+        })
+        if event_type == "track_started":
+            item["starts"] += 1
+            continue
+        item["closed"] += 1
+        reason = event.get("endReason")
+        if reason in RATED_REASONS:
+            item["rated"] += 1
+        else:
+            item["censored"] += 1
+        if reason in ("completed", "skipped", "interrupted", "unknown"):
+            item[reason] += 1
+    return dict(sorted(stats.items()))
+
+
+def capture_gap_summary(events: list[dict]) -> dict:
+    """Разрывы сбора: только начала, чтобы не удваивать границы."""
+    gaps = [
+        event for event in events
+        if event.get("type") == "capture_gap" and event.get("active") is True
+    ]
+    reasons: dict[str, int] = {}
+    for event in gaps:
+        reason = str(event.get("reason") or "unknown")
+        reasons[reason] = reasons.get(reason, 0) + 1
+    return {
+        "count": len(gaps),
+        "last_ts": max((int(event.get("ts") or 0) for event in gaps), default=None),
+        "reasons": reasons,
+    }
 
 
 def delete_candidates(metrics: list[dict], min_plays: int, min_duration: int) -> list[dict]:
@@ -548,6 +605,7 @@ def render_table(metrics: list[dict], limit: int) -> str:
 def render_report(
     metrics, sessions, manifests, sources, event_count,
     malformed, problems, position_resets, args,
+    source_stats=None, gap_stats=None,
 ):
     total_played = sum(track["played_ms"] or 0 for track in metrics)
     closed = sum(track["closed_plays"] for track in metrics)
@@ -559,6 +617,9 @@ def render_report(
     session_lost = sum(track["session_lost"] for track in metrics)
     not_played = sum(track["not_played"] for track in metrics)
     stopped = sum(track["stopped"] for track in metrics)
+    unknown = sum(track["unknown"] for track in metrics)
+    source_stats = source_stats or {}
+    gap_stats = gap_stats or {"count": 0, "last_ts": None, "reasons": {}}
     opens = sum(1 for track in metrics if track["open"])
     first_ts = sessions[0]["start"] if sessions else None
     last_ts = sessions[-1]["end"] if sessions else None
@@ -601,8 +662,20 @@ def render_report(
     )
     lines.append(
         f"Технические окончания: service_stopped: {service_stopped} · "
-        f"session_lost: {session_lost} · not_played: {not_played} · stopped: {stopped}"
+        f"session_lost: {session_lost} · not_played: {not_played} · "
+        f"stopped: {stopped} · unknown: {unknown}"
     )
+    if gap_stats.get("count"):
+        last_gap = time_of(gap_stats["last_ts"]) if gap_stats.get("last_ts") else "-"
+        lines.append(f"Разрывы сбора: {gap_stats['count']} · последний: {last_gap}")
+    if source_stats:
+        lines.append("По источникам:")
+        for source, item in source_stats.items():
+            lines.append(
+                f"  {source}: стартов {item['starts']} · закрыто {item['closed']} · "
+                f"оценено {item['rated']} · skipped {item['skipped']} · "
+                f"unknown {item['unknown']} · цензурировано {item['censored']}"
+            )
     lines.append("")
     lines.append(render_table(metrics, 0 if args.all else args.limit))
     lines.append("")
@@ -635,12 +708,14 @@ def main() -> int:
     metrics, sessions, _medians, position_resets = analyze(
         events, args.session_gap * 60 * 1000,
     )
+    source_stats = source_summary(events)
+    gap_stats = capture_gap_summary(events)
 
     if args.csv:
         fields = [
             "key", "package", "title", "artist", "plays", "closed_plays", "rated_plays", "open",
             "completed", "skipped", "interrupted", "service_stopped", "session_lost",
-            "not_played", "stopped", "played_ms", "duration_ms", "completion", "listened", "skip_rate",
+            "not_played", "stopped", "unknown", "played_ms", "duration_ms", "completion", "listened", "skip_rate",
             "early_skip_rate", "early_skips", "avg_skip_pct", "volume_delta", "volume_vs_trip",
             "volume_changes", "volume_up", "volume_down", "seek_back", "seek_fwd", "days",
             "last_played",
@@ -675,9 +750,13 @@ def main() -> int:
             "session_lost": sum(track["session_lost"] for track in metrics),
             "not_played": sum(track["not_played"] for track in metrics),
             "stopped": sum(track["stopped"] for track in metrics),
+            "unknown": sum(track["unknown"] for track in metrics),
             "open": sum(1 for track in metrics if track["open"]),
             "position_resets": position_resets,
+            "capture_gaps": gap_stats["count"],
         },
+        "source_stats": source_stats,
+        "capture_gaps": gap_stats,
         "tracks": metrics,
         "delete_candidates": delete_candidates(metrics, args.min_plays, args.min_duration),
     }
@@ -689,7 +768,7 @@ def main() -> int:
     else:
         print(render_report(
             metrics, sessions, manifests, sources, len(events), malformed,
-            problems, position_resets, args,
+            problems, position_resets, args, source_stats, gap_stats,
         ))
 
     if problems and args.strict:

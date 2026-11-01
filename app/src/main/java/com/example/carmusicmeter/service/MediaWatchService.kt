@@ -298,6 +298,7 @@ class MediaWatchService : Service() {
             volumeMax = reading.max ?: 0,
             source = reading.source.value,
             muted = reading.muted,
+            sourceReason = reading.reason,
         )
         events += teyesEventIfChanged(now, teyesStatus)
         events += stockEventIfChanged(now, stockState)
@@ -323,6 +324,7 @@ class MediaWatchService : Service() {
             volumeMax = reading.max ?: 0,
             source = reading.source.value,
             muted = reading.muted,
+            sourceReason = reading.reason,
         )
         events += result.events
         tracker.checkpoint(time, reading.value, reading.max ?: 0)?.let { events += it }
@@ -437,11 +439,16 @@ class MediaWatchService : Service() {
     private fun readVolume(): VolumeReading {
         val audioValue = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
         val audioMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val status = teyes.status()
+        val mcu = teyes.reading().let {
+            if (!status.available && !isTeyesUnit) it.copy(reason = "audio_fallback") else it
+        }
         return VolumeSelector.select(
-            mcu = teyes.reading(),
+            mcu = mcu,
             audioValue = audioValue,
             audioMax = audioMax,
             mcuMax = app.prefs.mcuMaxVolume,
+            fallbackReason = mcu.reason,
         )
     }
 

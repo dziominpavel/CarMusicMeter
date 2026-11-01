@@ -14,6 +14,7 @@ data class VolumeReading(
     val max: Int?,
     val source: VolumeSource,
     val muted: Boolean = false,
+    val reason: String? = null,
 )
 
 /** Выбирает MCU, если он доступен, иначе AudioManager. Чистая логика для тестов. */
@@ -27,6 +28,7 @@ object VolumeSelector {
         audioValue: Int,
         audioMax: Int,
         mcuMax: Int = DEFAULT_MCU_MAX,
+        fallbackReason: String? = null,
     ): VolumeReading {
         if (mcu != null && mcu.volume != null) {
             return VolumeReading(
@@ -34,12 +36,14 @@ object VolumeSelector {
                 max = mcuMax.takeIf { it > 0 },
                 source = VolumeSource.MCU,
                 muted = mcu.muted == true,
+                reason = mcu.reason ?: "mcu_available",
             )
         }
         return VolumeReading(
             value = audioValue,
             max = audioMax,
             source = VolumeSource.AUDIO,
+            reason = mcu?.reason ?: fallbackReason ?: "audio_fallback",
         )
     }
 }
@@ -49,4 +53,5 @@ data class McuVolume(
     val volume: Int?,
     val muted: Boolean?,
     val updatedAtMs: Long,
+    val reason: String? = null,
 )

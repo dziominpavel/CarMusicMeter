@@ -1,55 +1,159 @@
 package com.example.carmusicmeter.service
 
 import android.accessibilityservice.AccessibilityService
+import android.graphics.Rect
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.carmusicmeter.CarMusicMeterApp
+import com.example.carmusicmeter.data.AccessibilityNode
+import com.example.carmusicmeter.data.AccessibilityRange
+import com.example.carmusicmeter.data.AccessibilityWindow
+import com.example.carmusicmeter.data.AccessibilityWindowSelector
+import com.example.carmusicmeter.data.CaptureGap
+import com.example.carmusicmeter.data.DebounceGate
 import com.example.carmusicmeter.data.ListeningRepository
+import com.example.carmusicmeter.data.LogEvent
 import com.example.carmusicmeter.data.StockPlayerBridge
 import com.example.carmusicmeter.data.StockPlayerParser
 import com.example.carmusicmeter.data.StockPlayerProtocol
+import com.example.carmusicmeter.data.StockPlayerUiEvent
+import com.example.carmusicmeter.data.StockPlayerUiStore
+import com.example.carmusicmeter.data.UiLogThrottle
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
- * Необязательный резервный источник: читает только текст открытого окна
- * штатного плеера. Никаких кликов, скроллинга и изменения настроек.
+ * Читает видимое окно штатного плеера через accessibility.
  *
- * Включается вручную в спецдоступе Android. Если выключен, приложение
- * работает через MediaSession, broadcast и уведомления.
+ * Сервис не выполняет клики, скроллинг и ввод. Он перебирает все видимые окна
+ * (включая split-screen), стабилизирует переходный UI и пишет диагностику,
+ * по которой можно уточнить view id и формат прогресса.
  */
 class StockPlayerAccessibilityService : AccessibilityService() {
 
-    private var lastSignature: String? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val debounce = DebounceGate(DEBOUNCE_MS)
+    private val uiThrottle = UiLogThrottle(UI_LOG_INTERVAL_MS)
+
+    private var lastAcceptedSignature: String? = null
     private var lastScanAt = 0L
+    private var gapActive = false
+
+    private val scanRunnable = Runnable { scan() }
+    private val pollRunnable = Runnable { scan() }
+
+    override fun onServiceConnected() {
+        super.onServiceConnected()
+        schedulePoll(INITIAL_POLL_MS)
+    }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        val packageName = event?.packageName?.toString() ?: return
-        if (!StockPlayerProtocol.isStockPackage(packageName)) return
-        if (event.eventType !in EVENTS) return
+        scan()
+    }
 
+    override fun onInterrupt() = Unit
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        ioScope.cancel()
+        super.onDestroy()
+    }
+
+    private fun scan() {
         val now = SystemClock.elapsedRealtime()
-        if (now - lastScanAt < SCAN_INTERVAL_MS) return
+        if (now - lastScanAt < MIN_SCAN_GAP_MS) return
         lastScanAt = now
 
-        val root = rootInActiveWindow ?: return
-        if (root.packageName?.toString() != packageName) return
-        val texts = collectTexts(root)
-        if (texts.isEmpty()) return
-        val signature = texts.joinToString("|")
-        if (signature == lastSignature) return
-        lastSignature = signature
-
         val audio = getSystemService(AudioManager::class.java)
-        val state = StockPlayerParser.fromAccessibility(
-            packageName = packageName,
-            texts = texts,
-            playing = audio?.isMusicActive == true,
-            nowMs = System.currentTimeMillis(),
-            nowMonoMs = SystemClock.elapsedRealtime(),
-        ) ?: return
-        StockPlayerBridge.update(state)
+        val musicActive = audio?.isMusicActive == true
+        val windows = collectWindows()
+        val selected = AccessibilityWindowSelector.select(windows)
+        val latest = StockPlayerBridge.latest()
 
+        if (selected == null) {
+            if (musicActive && latest != null && !gapActive) {
+                gapActive = true
+                logGap(active = true, reason = "stock_window_unavailable", windows = windows)
+            } else if (!musicActive && gapActive) {
+                gapActive = false
+                logGap(active = false, reason = "music_inactive", windows = windows)
+            }
+            // Окна плеера нет: не крутим дорогой скан каждые 2 секунды.
+            // Появление окна всё равно даст accessibility-событие.
+            schedulePoll(IDLE_POLL_MS)
+            return
+        }
+
+        if (gapActive) {
+            gapActive = false
+            logGap(active = false, reason = "stock_window_visible", windows = windows)
+        }
+
+        // Окно плеера видимо: даже если это список файлов, музыка может играть.
+        // Не даём последнему известному треку истечь, пока окно не пропало.
+        StockPlayerBridge.touch(now)
+
+        val signature = selected.signature()
+        if (signature == lastAcceptedSignature) {
+            schedulePoll(if (musicActive) ACTIVE_POLL_MS else IDLE_POLL_MS)
+            return
+        }
+
+        if (!debounce.offer(signature, now)) {
+            scheduleScan(DEBOUNCE_MS)
+            schedulePoll(if (musicActive) ACTIVE_POLL_MS else IDLE_POLL_MS)
+            return
+        }
+
+        val nowWall = System.currentTimeMillis()
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = selected.packageName,
+            window = selected,
+            playing = musicActive,
+            nowMs = nowWall,
+            nowMonoMs = now,
+        )
+        StockPlayerUiStore.update(
+            window = selected,
+            accepted = result.accepted,
+            rejectReason = result.rejectReason,
+            confidence = result.confidence,
+            title = result.state?.title,
+            artist = result.state?.artist,
+            durationMs = result.state?.durationMs,
+            positionMs = result.state?.positionMs,
+        )
+        if (uiThrottle.shouldLog(signature, now)) {
+            logUi(selected, windows, result, nowWall)
+        }
+        if (result.accepted && result.state != null) {
+            StockPlayerBridge.update(result.state)
+            lastAcceptedSignature = signature
+            maybeStartWatch()
+        }
+
+        schedulePoll(if (musicActive) ACTIVE_POLL_MS else IDLE_POLL_MS)
+    }
+
+    private fun scheduleScan(delayMs: Long) {
+        handler.removeCallbacks(scanRunnable)
+        handler.postDelayed(scanRunnable, delayMs)
+    }
+
+    private fun schedulePoll(delayMs: Long) {
+        handler.removeCallbacks(pollRunnable)
+        handler.postDelayed(pollRunnable, delayMs)
+    }
+
+    private fun maybeStartWatch() {
         val app = applicationContext as? CarMusicMeterApp ?: return
         if (app.prefs.autoStart && !ListeningRepository.state.value.serviceRunning) {
             runCatching {
@@ -58,33 +162,104 @@ class StockPlayerAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onInterrupt() = Unit
-
-    private fun collectTexts(root: AccessibilityNodeInfo): List<String> {
-        val out = LinkedHashSet<String>()
-        visit(root, out, 0)
-        return out.map { it.take(120) }.take(20)
+    private fun collectWindows(): List<AccessibilityWindow> {
+        val result = mutableListOf<AccessibilityWindow>()
+        val source = runCatching { windows }.getOrNull().orEmpty()
+        for (window in source) {
+            val root = window.root ?: continue
+            val packageName = root.packageName?.toString() ?: continue
+            if (!StockPlayerProtocol.isStockPackage(packageName)) continue
+            val nodes = collectNodes(root)
+            if (nodes.isEmpty()) continue
+            result += AccessibilityWindow(
+                packageName = packageName,
+                title = window.title?.toString(),
+                active = window.isActive,
+                focused = window.isFocused,
+                nodes = nodes,
+            )
+        }
+        return result
     }
 
-    private fun visit(node: AccessibilityNodeInfo, out: MutableSet<String>, depth: Int) {
-        if (depth > MAX_DEPTH || out.size >= MAX_TEXTS) return
+    private fun collectNodes(root: AccessibilityNodeInfo): List<AccessibilityNode> {
+        val out = mutableListOf<AccessibilityNode>()
+        visit(root, out, 0)
+        return out
+    }
+
+    private fun visit(node: AccessibilityNodeInfo, out: MutableList<AccessibilityNode>, depth: Int) {
+        if (out.size >= MAX_NODES || depth > MAX_DEPTH) return
         if (node.isVisibleToUser) {
-            node.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(out::add)
-            node.contentDescription?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(out::add)
+            val text = node.text?.toString()?.trim()?.take(MAX_TEXT)
+            val description = node.contentDescription?.toString()?.trim()?.take(MAX_TEXT)
+            val range = node.rangeInfo?.let {
+                AccessibilityRange(
+                    min = it.min,
+                    max = it.max,
+                    current = it.current,
+                )
+            }
+            val viewId = node.viewIdResourceName
+            if (text != null || description != null || range != null || viewId != null) {
+                val bounds = Rect()
+                runCatching { node.getBoundsInScreen(bounds) }
+                out += AccessibilityNode(
+                    className = node.className?.toString(),
+                    viewId = viewId,
+                    text = text,
+                    contentDescription = description,
+                    range = range,
+                    bounds = "${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}",
+                )
+            }
         }
         for (index in 0 until node.childCount) {
+            if (out.size >= MAX_NODES) return
             node.getChild(index)?.let { child -> visit(child, out, depth + 1) }
         }
     }
 
-    private companion object {
-        const val SCAN_INTERVAL_MS = 400L
-        const val MAX_DEPTH = 12
-        const val MAX_TEXTS = 20
-        val EVENTS = setOf(
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+    private fun logUi(
+        window: AccessibilityWindow,
+        windows: List<AccessibilityWindow>,
+        result: StockPlayerParser.AccessibilityParseResult,
+        nowWall: Long,
+    ) {
+        val fields = StockPlayerUiEvent(window, windows, result).toFields()
+        append(LogEvent(nowWall, "stock_player_ui", fields))
+    }
+
+    private fun logGap(active: Boolean, reason: String, windows: List<AccessibilityWindow>) {
+        val gap = CaptureGap(
+            active = active,
+            reason = reason,
+            last = StockPlayerBridge.latest(),
+            isMusicActive = getSystemService(AudioManager::class.java)?.isMusicActive == true,
+            windows = windows,
         )
+        append(LogEvent(System.currentTimeMillis(), "capture_gap", gap.toFields()))
+    }
+
+    private fun append(event: LogEvent) {
+        val app = applicationContext as? CarMusicMeterApp ?: return
+        ioScope.launch {
+            runCatching {
+                app.eventLog.append(event)
+                ListeningRepository.record(listOf(event))
+            }
+        }
+    }
+
+    private companion object {
+        const val DEBOUNCE_MS = 800L
+        const val UI_LOG_INTERVAL_MS = 2_000L
+        const val MIN_SCAN_GAP_MS = 100L
+        const val ACTIVE_POLL_MS = 2_000L
+        const val IDLE_POLL_MS = 5_000L
+        const val INITIAL_POLL_MS = 500L
+        const val MAX_NODES = 60
+        const val MAX_DEPTH = 16
+        const val MAX_TEXT = 200
     }
 }

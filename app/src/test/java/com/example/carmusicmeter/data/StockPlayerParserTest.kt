@@ -1,6 +1,7 @@
 package com.example.carmusicmeter.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -136,5 +137,135 @@ class StockPlayerParserTest {
         assertTrue(StockPlayerBridge.update(later))
         assertEquals("Other Song", StockPlayerBridge.snapshot(now + 11_000L, true)?.title)
         StockPlayerBridge.reset()
+    }
+
+    private fun window(vararg texts: String, rate: AccessibilityRange? = null): AccessibilityWindow =
+        AccessibilityWindow(
+            packageName = "com.syu.music",
+            nodes = texts.map { AccessibilityNode(text = it) } +
+                listOfNotNull(rate?.let { AccessibilityNode(range = it) }),
+        )
+
+    @Test
+    fun `accessibility отклоняет заголовок папки и строку списка`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window(
+                "Список",
+                "1763. Tina Turner - The Best.flac",
+                "1764. Tinie Tempah - Written In The Stars.flac",
+            ),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertFalse(result.accepted)
+        assertEquals("folder_header", result.rejectReason)
+        assertNull(result.state)
+    }
+
+    @Test
+    fun `accessibility принимает строку исполнитель тире название`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window(
+                "Tina Turner - The Best.flac",
+                "Список",
+                "Tina Turner",
+                "1763. Tina Turner - The Best.flac",
+            ),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertTrue(result.accepted)
+        assertEquals("The Best", result.state?.title)
+        assertEquals("Tina Turner", result.state?.artist)
+        assertEquals("high", result.confidence)
+    }
+
+    @Test
+    fun `accessibility не принимает экран папки за трек`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window("Внутренняя память", "Список музыки"),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertFalse(result.accepted)
+        assertEquals("folder_header", result.rejectReason)
+    }
+
+    @Test
+    fun `accessibility снимает медиа расширение`() {
+        val state = StockPlayerParser.fromAccessibility(
+            packageName = "com.syu.music",
+            texts = listOf("The Best.flac", "Tina Turner"),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertEquals("The Best", state?.title)
+    }
+
+    @Test
+    fun `время задает позицию и длительность`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window("The Best.flac", "Tina Turner", "00:30", "03:45"),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertEquals(30_000L, result.state?.positionMs)
+        assertEquals(225_000L, result.state?.durationMs)
+    }
+
+    @Test
+    fun `одно время задает только позицию`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window("The Best.flac", "Tina Turner", "00:30"),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertEquals(30_000L, result.state?.positionMs)
+        assertNull(result.state?.durationMs)
+    }
+
+    @Test
+    fun `rangeInfo в миллисекундах задает прогресс`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window(
+                "The Best.flac",
+                "Tina Turner",
+                rate = AccessibilityRange(min = 0f, max = 180_000f, current = 30_000f),
+            ),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertEquals(30_000L, result.state?.positionMs)
+        assertEquals(180_000L, result.state?.durationMs)
+    }
+
+    @Test
+    fun `rangeInfo в долях без времени не подставляет длительность`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window(
+                "The Best.flac",
+                "Tina Turner",
+                rate = AccessibilityRange(min = 0f, max = 1f, current = 0.5f),
+            ),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertNull(result.state?.positionMs)
+        assertNull(result.state?.durationMs)
     }
 }

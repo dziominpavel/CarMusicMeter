@@ -69,4 +69,23 @@ class StockPlayerStateTest {
     fun `монотонная отметка сохраняется в модели`() {
         assertEquals(5_000L, state().updatedAtMonoMs)
     }
+
+    @Test
+    fun `видимое окно touch не даёт accessibility истечь за 15 минут`() {
+        StockPlayerBridge.reset()
+        val value = state(source = StockPlayerSources.ACCESSIBILITY, updatedAtMonoMs = 0L)
+        StockPlayerBridge.update(value)
+        StockPlayerBridge.touch(15 * 60_000L)
+
+        assertNotNull(StockPlayerBridge.snapshot(15 * 60_000L + 1_000L, isMusicActive = true))
+        StockPlayerBridge.reset()
+    }
+
+    @Test
+    fun `потеря окна истекает accessibility за 90 секунд`() {
+        val value = state(source = StockPlayerSources.ACCESSIBILITY, updatedAtMonoMs = 0L)
+
+        assertNull(value.toSnapshot(90_001L, isMusicActive = true))
+        assertNotNull(value.toSnapshot(89_999L, isMusicActive = true))
+    }
 }

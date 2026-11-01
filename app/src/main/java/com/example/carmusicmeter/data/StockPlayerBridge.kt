@@ -70,7 +70,7 @@ data class StockPlayerState(
 
     private companion object {
         const val PLAYING_STALE_MS = 30 * 60_000L
-        const val ACCESSIBILITY_STALE_MS = 10 * 60_000L
+        const val ACCESSIBILITY_STALE_MS = 90_000L
         const val PAUSED_STALE_MS = 10 * 60_000L
     }
 }
@@ -118,6 +118,17 @@ object StockPlayerBridge {
         }
         current = state
         return old?.metaSignature != state.metaSignature
+    }
+
+    /**
+     * Поддерживает состояние свежим, пока окно плеера видимо, даже если текст
+     * не менялся. Иначе длинный трек истекал бы по таймауту.
+     */
+    @Synchronized
+    fun touch(nowMonoMs: Long): Boolean {
+        val old = current ?: return false
+        current = old.copy(updatedAtMonoMs = nowMonoMs)
+        return true
     }
 
     @Synchronized

@@ -20,13 +20,13 @@
 | `NotificationWatchService` | доступ к уведомлениям; текст медиа-уведомлений как резервный источник |
 | `MediaSessionProbe` | чтение `MediaSessionManager`, снимок сессии, полный JSON-дамп |
 | `StockPlayerBridge` | последнее состояние штатного плеера Teyes вне MediaSession |
-| `StockPlayerAccessibilityService` | необязательное чтение текста открытого окна плеера |
+| `StockPlayerAccessibilityService` | чтение видимых окон плеера, split-screen, debounce и диагностика UI |
 | `TeyesToolkitClient` | binder-клиент `com.syu.ms`, реальная громкость MCU |
 | `SourcePicker` | выбор источника «сейчас играет»: MediaSession или штатный плеер |
 | `ListeningTracker` | чистая логика: границы трека, пропуск, пауза, перемотка |
 | `EventLog` | JSONL с fsync, снимки, ZIP-экспорт |
 | `ListeningRepository` | `StateFlow` для экрана, счётчики за день |
-| `SnapshotWriter` | окружение, громкость, аудиовыходы, все сессии, уведомления, `stockPlayer`, `teyes`, пакеты |
+| `SnapshotWriter` | окружение, громкость, аудиовыходы, все сессии, уведомления, `stockPlayer`, `stockPlayerUi`, `teyes`, пакеты |
 | `AutostartScheduler` / `AutostartJobService` | persisted JobScheduler и страховка автозапуска |
 | `AutostartActivity` | невидимый пункт для списка автозапуска Teyes |
 | `ProbeScreen` | экран диагностики и кнопки |
@@ -36,8 +36,8 @@
 ```
 MediaSessionManager ──► MediaSessionProbe ─┐
 titlesReceiver ───────► StockPlayerBridge ─┼─► SourcePicker ─► ListeningTracker
-accessibility ────────► StockPlayerBridge ─┤                         │
-уведомление ──────────► StockPlayerBridge ─┘                         ▼
+accessibility ─► окна/debounce ► StockPlayerBridge ─┤                 │
+уведомление ──────────► StockPlayerBridge ──────────┘                 ▼
 NotificationListener ─► NotificationCache ─────────────────► EventLog (JSONL)
 Teyes MCU ────────────► TeyesToolkitClient ─┐                       │
 AudioManager ───────────────────────────────┴─► VolumeSelector      │
@@ -78,19 +78,22 @@ AudioManager ──────────────────────�
 
 | Тип | Когда | Ключевые поля |
 |---|---|---|
-| `track_started` | появился новый трек | `trackKey`, `package`, `source`, `title`, `artist`, `album`, `mediaId`, `durationMs`, `positionMs`, `volume`, `volumeSource`, `actions`, `metadataKeys` |
-| `track_progress` | раз в 60 с и на паузе/остановке | `trackKey`, `positionMs`, `playedMs`, `durationMs`, `volume`, `volumeMax`, `phase` |
-| `track_ended` | трек сменился/пропал/служба остановилась | `playedMs`, `endPositionMs`, `endReason`, `completed`, `volumeStart/End/Low/High`, `volumeChanges`, `volumeSource`, `nextTitle` |
+| `track_started` | появился новый трек | `trackKey`, `package`, `source`, `title`, `artist`, `album`, `mediaId`, `durationMs`, `positionMs`, `volume`, `volumeMax`, `volumeSource`, `actions`, `metadataKeys` |
+| `track_progress` | раз в 60 с и на паузе/остановке | `trackKey`, `positionMs`, `playedMs`, `durationMs`, `volume`, `volumeMax`, `volumeSource`, `phase` |
+| `track_ended` | трек сменился/пропал/служба остановилась | `playedMs`, `endPositionMs`, `endReason`, `completed`, `volumeStats`, `volumeStart/End/Low/High`, `volumeChanges`, `volumeSource`, `nextTitle` |
 | `capture_error` | ошибка тика или записи | `stage`, `message`, `exception`, `consecutive`, `droppedEvents` |
 | `capture_recovered` | цикл восстановился после ошибки | `failures`, `lastError` |
 | `clock_changed` | настенные часы прыгнули относительно монотонных | `wallDelta`, `monoDelta`, `driftMs` |
 | `playback_paused` / `playback_resumed` / `playback_stopped` | смена состояния | `trackKey`, `source`, `positionMs`, `playedMs` |
 | `seek` | позиция скакнула больше чем на 5 с | `fromMs`, `toMs`, `deltaMs` |
-| `volume_changed` | изменилась абсолютная громкость | `previous`, `value`, `max`, `delta`, `level`, `source` (`mcu`/`audio`), `muted`, `trackKey` |
-| `mute_changed` | включили/выключили mute | `muted`, `volume`, `volumeMax`, `source`, `trackKey` |
+| `volume_changed` | изменилась абсолютная громкость | `previous`, `value`, `max`, `delta`, `level`, `source` (`mcu`/`audio`), `sourceReason`, `muted`, `trackKey` |
+| `volume_source_changed` | сменился источник громкости | `from`, `to`, `fromValue`, `toValue`, `fromMax`, `toMax`, `sourceReason`, `trackKey` |
+| `mute_changed` | включили/выключили mute | `muted`, `volume`, `volumeMax`, `source`, `sourceReason`, `trackKey` |
 | `notification` | уведомление | `package`, `title`, `text`, `bigText`, `actions`, `hasMediaSession`, `mediaLike`, `extras`, `remoteTexts` |
 | `stock_player_text` | изменился текст штатного плеера | `package`, `title`, `artist`, `source`, `playing`, `rawTexts` |
-| `teyes_toolkit` | изменилось состояние MCU-сервиса | `available`, `connected`, `module`, `volume`, `muted`, `error` |
+| `stock_player_ui` | изменилась структура окна плеера | `package`, `allTexts`, `nodes`, `windows`, `accepted`, `rejectReason`, `confidence`, `rangeInfo` |
+| `capture_gap` | окно плеера пропало или вернулось | `active`, `reason`, `lastTitle`, `lastSource`, `isMusicActive`, `windows` |
+| `teyes_toolkit` | изменилось состояние MCU-сервиса | `available`, `connected`, `module`, `error` |
 | `service_started` | служба запущена | `source` (`manual`, `boot`, `job`, `media_mounted`, `app_open`, `teyes_autostart`, `accessibility`, `notification`, `system_restart`) |
 | `app_crash` | необработанное исключение | `message`, `exception`, `file` |
 | `boot_received` | получен boot-интент | `action` |
@@ -101,10 +104,11 @@ AudioManager ──────────────────────�
 
 - `completed` — позиция дошла до конца трека (допуск 3 с) или проиграно почти вся длительность;
 - `skipped` — трек сменился в том же плеере, не дослушан;
+- `unknown` — трек сменился, но длительность/позиция неизвестны (accessibility без времени);
 - `interrupted` — сессию перехватил другой пакет;
 - `stopped` — плеер перешёл в `STOPPED`;
 - `not_played` — трек был активен меньше 3 секунд и не дослушан;
-- `session_lost` — сессия исчезла дольше чем на 5 с;
+- `session_lost` — сессия или окно исчезли дольше чем на 5 с;
 - `service_stopped` — службу остановили.
 
 ## Идентичность трека
@@ -132,10 +136,13 @@ broadcast → accessibility) обновляют snapshot текущего тре
 2. `titlesReceiver` — broadcast лаунчера FYT с `title`, `play_artist`,
    `play_album`, `play_path`, `play_state`, `play_total`, `play_cur`.
    Приёмник регистрируется динамически в работающей службе.
-3. Accessibility — необязательное чтение текста открытого окна
-   `com.yf.teyesspotify`/`com.syu.music`. Только чтение, без кликов; сырые
-   тексты сохраняются, потому что эвристика «первый текст — название» может
-   ошибаться.
+3. Accessibility — необязательное чтение видимых окон
+   `com.yf.teyesspotify`/`com.syu.music`, включая split-screen. Только чтение,
+   без кликов. Парсер принимает трек только по уверенной строке
+   `Artist - Title.ext` или `Title.ext` + исполнитель; заголовки папок и строки
+   списка игнорируются, переходный UI стабилизируется 800 мс. Если окно отдаёт
+   время или `SeekBar.rangeInfo`, заполняются `positionMs`/`durationMs`; иначе
+   окончание получает `unknown`, а не ложный `skipped`.
 4. Уведомление — extras и текст `RemoteViews`, если плеер их публикует.
    Обновление только времени позиции в `text/subText` не создаёт событие;
    в кэш снимка попадают только медиа-подобные уведомления и уведомления
@@ -149,15 +156,26 @@ MediaSession. Каждый трек помечается `source`, поэтом�
 
 Состояние штатного плеера не считается играющим только потому, что существует
 уведомление: для `notification` и broadcast без `play_state` используется
-`isMusicActive`. Пауза живёт в снимке 10 минут, играющее состояние — 30 минут,
-поэтому пауза на светофоре или редкий broadcast не разрезают трек.
+`isMusicActive`. Состояние из broadcast/уведомления на паузе живёт 10 минут,
+играющее — 30 минут. Accessibility-состояние поддерживается свежим, пока окно
+плеера видимо, даже без смены текста; после потери окна оно истекает за 90 секунд,
+и трек закрывается как `session_lost`. Границы разрыва пишутся событием
+`capture_gap`, а не маскируются последним треком.
 
 Громкость: `TeyesToolkitClient` подключается к `com.syu.ms/app.ToolkitService`
 и читает модуль `sound` (`U_VOL`, `U_MUTE`). Это реальная громкость панели.
 На проверенной CC3 шкала 0…43: событие пишет `30/43` и `level=30/43`, а не
 `max=null`. Если сервис недоступен, используется `AudioManager`; если
 максимум явно отключён, `max`/`level` могут быть `null`. Подставлять 25 от
-Android нельзя.
+Android нельзя. Смена источника MCU ↔ audio пишется `volume_source_changed`
+с причиной (`mcu_available`, `mcu_unavailable`, `mcu_stale`, `mcu_error`,
+`audio_fallback`); ложный `delta` между шкалами не создаётся.
+
+`track_ended.volumeStats` хранит start/low/high/end/max/changes отдельно для
+каждого источника, поэтому возврат MCU после audio не стирает прежний диапазон.
+Верхнеуровневые `volumeStart/End/Low/High` отражают последний сегмент и оставлены
+для совместимости. `teyes_toolkit` пишется только при смене подключения/модуля/
+ошибки, а не на каждое значение громкости.
 
 Mute не подменяет абсолютную громкость нулём: `volume_changed` несёт реальное
 значение, а включение/выключение mute пишется отдельным `mute_changed`. Поэтому
@@ -183,8 +201,9 @@ Mute не подменяет абсолютную громкость нулём:
 - `files/logs/` — дневные JSONL-файлы; `files/snapshots/` — JSON-снимки;
   crash-файлы лежат рядом с журналом.
 - Снимок содержит `volume` для `STREAM_MUSIC`, `volumes` для всех потоков,
-  `isVolumeFixed`, `audioMode`, `isMusicActive`, `stockPlayer`, `teyes`,
-  `packages` и последние уведомления с `mediaLike`.
+  `isVolumeFixed`, `audioMode`, `isMusicActive`, `stockPlayer`, `stockPlayerUi`,
+  `notificationListenerConnected`, `teyes`, `packages` и последние уведомления
+  с `mediaLike`.
 - `EventLog.trimOld(policy)` при старте (и после смены настроек) удаляет
   завершённые дни старше настроенного срока, а при превышении лимита объёма
   (по умолчанию 500 МБ) — самые старые завершённые дни. Текущий день защищён.
@@ -215,6 +234,12 @@ Mute не подменяет абсолютную громкость нулём:
   это будет видно в снимке.
 - **Медиа-уведомление** — резервный источник. Оно даёт название и исполнителя, но
   обычно не даёт позицию; метрики «сколько играло» и «что было дальше» сохраняются.
+- **Accessibility видит только видимое окно.** В полноэкранном навигаторе плеер
+  не читается; `capture_gap` фиксирует разрыв, а не подставляет старый трек.
+  Split-screen проверяется через `getWindows()`, но не гарантируется прошивкой.
+- **Accessibility без времени/SeekBar** не знает длительность. Такие окончания
+  помечаются `unknown` и не входят в `skip_rate`/`completion`; это честнее
+  ложного `skipped`.
 
 ## Почему JSONL, а не Room
 

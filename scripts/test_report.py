@@ -34,7 +34,8 @@ def end(
     reason: str = "completed",
     title: str = "Song",
     artist: str = "Artist",
-    duration: int = 180_000,
+    duration: int | None = 180_000,
+    source: str = "media_session",
 ):
     return {
         "ts": ts,
@@ -47,6 +48,7 @@ def end(
         "playedMs": played,
         "endPositionMs": end_pos,
         "endReason": reason,
+        "source": source,
         "startedAt": ts - played,
         "volumeStart": 10,
         "volumeEnd": 12,
@@ -171,6 +173,56 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(1, track["not_played"])
         self.assertEqual(1.0, track["skip_rate"])
         self.assertEqual([], report.delete_candidates(metrics, min_plays=3, min_duration=60))
+
+    def test_unknown_is_censored_and_not_rated(self) -> None:
+        key = "com.syu.music::song::artist"
+        events = [
+            start(BASE, key, duration=None),
+            end(
+                BASE + 60_000,
+                key,
+                60_000,
+                0,
+                reason="unknown",
+                duration=None,
+                source="accessibility",
+            ),
+        ]
+
+        metrics, _, _, _ = report.analyze(events, 10 * 60 * 1000)
+        track = metrics[0]
+
+        self.assertEqual(0, track["rated_plays"])
+        self.assertEqual(1, track["unknown"])
+        self.assertIsNone(track["skip_rate"])
+        self.assertIsNone(track["completion"])
+
+    def test_source_summary_and_capture_gaps(self) -> None:
+        key = "com.example.player::song::artist"
+        events = [
+            start(BASE, key),
+            end(BASE + 60_000, key, 60_000, 60_000, source="media_session"),
+            {
+                "ts": BASE + 70_000,
+                "type": "capture_gap",
+                "active": True,
+                "reason": "stock_window_unavailable",
+            },
+            {
+                "ts": BASE + 80_000,
+                "type": "capture_gap",
+                "active": False,
+                "reason": "stock_window_visible",
+            },
+        ]
+
+        summary = report.source_summary(events)
+        gaps = report.capture_gap_summary(events)
+
+        self.assertEqual(1, summary["media_session"]["starts"])
+        self.assertEqual(1, summary["media_session"]["rated"])
+        self.assertEqual(1, gaps["count"])
+        self.assertEqual(BASE + 70_000, gaps["last_ts"])
 
 
 if __name__ == "__main__":
