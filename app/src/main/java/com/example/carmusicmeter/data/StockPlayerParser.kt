@@ -63,6 +63,7 @@ object StockPlayerParser {
         nowMs: Long,
         packageName: String,
         nowMonoMs: Long = nowMs,
+        source: String = StockPlayerSources.FYT_BROADCAST,
     ): StockPlayerState? {
         val title = string(extras[StockPlayerProtocol.EXTRA_TITLE])
             ?.takeIf(::isPlausibleTitle)
@@ -89,7 +90,7 @@ object StockPlayerParser {
             positionMs = position,
             playing = playing,
             playingKnown = playingKnown,
-            source = StockPlayerSources.FYT_BROADCAST,
+            source = source,
             updatedAtMs = nowMs,
             updatedAtMonoMs = nowMonoMs,
             rawTexts = listOfNotNull(title, artist, album).distinct(),
@@ -403,6 +404,7 @@ object StockPlayerParser {
 
 object StockPlayerSources {
     const val MEDIA_SESSION = "media_session"
+    const val FYT_SERVICE = "fyt_service"
     const val FYT_BROADCAST = "fyt_broadcast"
     const val ACCESSIBILITY = "accessibility"
     const val NOTIFICATION = "notification"

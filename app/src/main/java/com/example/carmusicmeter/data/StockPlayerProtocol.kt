@@ -5,9 +5,10 @@ import android.content.Context
 /**
  * Протокол лаунчера FYT для штатного плеера.
  *
- * Штатный плеер не публикует MediaSession. На Teyes он называется
- * `com.yf.teyesspotify`, на других FYT — `com.syu.music`; лаунчер может
- * пересылать его состояние широковещательным `titlesReceiver`.
+ * Штатный плеер не публикует MediaSession. На проверенном Teyes CC3 это
+ * `com.syu.music`; `com.yf.teyesspotify` остаётся резервным именем для других
+ * прошивок. Лаунчер может пересылать состояние широковещательным
+ * `titlesReceiver`, а сам плеер — сервисом `com.fyt.launcher.music`.
  */
 object StockPlayerProtocol {
 
@@ -23,7 +24,9 @@ object StockPlayerProtocol {
     const val EXTRA_POSITION = "play_cur"
     const val EXTRA_SOURCE = "source"
 
-    val PACKAGES = listOf("com.yf.teyesspotify", "com.syu.music")
+    const val STOCK_PACKAGE = "com.syu.music"
+
+    val PACKAGES = listOf(STOCK_PACKAGE, "com.yf.teyesspotify")
 
     fun isStockPackage(packageName: String?): Boolean =
         packageName != null && packageName in PACKAGES

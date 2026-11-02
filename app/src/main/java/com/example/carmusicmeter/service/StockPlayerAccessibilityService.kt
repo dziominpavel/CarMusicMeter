@@ -1,6 +1,7 @@
 package com.example.carmusicmeter.service
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.graphics.Rect
 import android.media.AudioManager
 import android.os.Handler
@@ -9,6 +10,7 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.carmusicmeter.CarMusicMeterApp
+import com.example.carmusicmeter.data.AccessibilityConnection
 import com.example.carmusicmeter.data.AccessibilityNode
 import com.example.carmusicmeter.data.AccessibilityRange
 import com.example.carmusicmeter.data.AccessibilityWindow
@@ -52,7 +54,24 @@ class StockPlayerAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        val now = SystemClock.elapsedRealtime()
+        AccessibilityConnection.onConnected(now)
+        append(
+            LogEvent(
+                ts = System.currentTimeMillis(),
+                type = "accessibility_connected",
+                fields = linkedMapOf(
+                    "package" to packageName,
+                    "component" to "${javaClass.name}",
+                ),
+            ),
+        )
         schedulePoll(INITIAL_POLL_MS)
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        AccessibilityConnection.onDisconnected()
+        return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -62,6 +81,7 @@ class StockPlayerAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        AccessibilityConnection.onDisconnected()
         handler.removeCallbacksAndMessages(null)
         ioScope.cancel()
         super.onDestroy()
@@ -69,6 +89,7 @@ class StockPlayerAccessibilityService : AccessibilityService() {
 
     private fun scan() {
         val now = SystemClock.elapsedRealtime()
+        AccessibilityConnection.onScan(now)
         if (now - lastScanAt < MIN_SCAN_GAP_MS) return
         lastScanAt = now
 
@@ -76,10 +97,9 @@ class StockPlayerAccessibilityService : AccessibilityService() {
         val musicActive = audio?.isMusicActive == true
         val windows = collectWindows()
         val selected = AccessibilityWindowSelector.select(windows)
-        val latest = StockPlayerBridge.latest()
 
         if (selected == null) {
-            if (musicActive && latest != null && !gapActive) {
+            if (musicActive && !gapActive) {
                 gapActive = true
                 logGap(active = true, reason = "stock_window_unavailable", windows = windows)
             } else if (!musicActive && gapActive) {

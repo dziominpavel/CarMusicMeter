@@ -13,7 +13,14 @@ import report  # noqa: E402
 BASE = 1_700_000_000_000
 
 
-def start(ts: int, key: str, title: str = "Song", artist: str = "Artist", duration: int = 180_000):
+def start(
+    ts: int,
+    key: str,
+    title: str = "Song",
+    artist: str = "Artist",
+    duration: int = 180_000,
+    source: str = "media_session",
+):
     return {
         "ts": ts,
         "type": "track_started",
@@ -22,6 +29,7 @@ def start(ts: int, key: str, title: str = "Song", artist: str = "Artist", durati
         "title": title,
         "artist": artist,
         "durationMs": duration,
+        "source": source,
         "volume": 10,
     }
 
@@ -36,6 +44,7 @@ def end(
     artist: str = "Artist",
     duration: int | None = 180_000,
     source: str = "media_session",
+    raw_played: int | None = None,
 ):
     return {
         "ts": ts,
@@ -46,6 +55,7 @@ def end(
         "artist": artist,
         "durationMs": duration,
         "playedMs": played,
+        "rawPlayedMs": raw_played if raw_played is not None else played,
         "endPositionMs": end_pos,
         "endReason": reason,
         "source": source,
@@ -196,6 +206,55 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(1, track["unknown"])
         self.assertIsNone(track["skip_rate"])
         self.assertIsNone(track["completion"])
+
+    def test_fyt_service_media_buttons_and_censored_played(self) -> None:
+        key = "com.syu.music::song::artist"
+        events = [
+            start(BASE, key, duration=185_000, source="fyt_service"),
+            end(
+                BASE + 185_000,
+                key,
+                185_000,
+                185_000,
+                reason="session_lost",
+                duration=185_000,
+                source="fyt_service",
+                raw_played=205_669,
+            ),
+            {"ts": BASE + 1_000, "type": "media_button", "key": "media_next", "action": "down"},
+            {"ts": BASE + 1_100, "type": "media_button", "key": "media_next", "action": "up"},
+            {"ts": BASE + 2_000, "type": "media_button", "key": "media_previous", "action": "down"},
+            {"ts": BASE + 3_000, "type": "media_button", "key": "media_play_pause", "action": "down"},
+        ]
+
+        metrics, _, _, _ = report.analyze(events, 10 * 60 * 1000)
+        summary = report.source_summary(events)
+        buttons = report.media_button_summary(events)
+
+        self.assertEqual(1, summary["fyt_service"]["starts"])
+        self.assertEqual(1, summary["fyt_service"]["censored"])
+        self.assertEqual(1, buttons["next"])
+        self.assertEqual(1, buttons["previous"])
+        self.assertEqual(1, buttons["play_pause"])
+        self.assertEqual(3, buttons["total"])
+        self.assertEqual(185_000, metrics[0]["played_ms"])
+        self.assertEqual(205_669, metrics[0]["raw_played_ms"])
+        self.assertEqual(20_669, metrics[0]["censored_ms"])
+
+    def test_capture_gap_no_source(self) -> None:
+        events = [
+            {
+                "ts": BASE,
+                "type": "capture_gap",
+                "active": True,
+                "reason": "no_source",
+            },
+        ]
+
+        gaps = report.capture_gap_summary(events)
+
+        self.assertEqual(1, gaps["count"])
+        self.assertEqual({"no_source": 1}, gaps["reasons"])
 
     def test_source_summary_and_capture_gaps(self) -> None:
         key = "com.example.player::song::artist"

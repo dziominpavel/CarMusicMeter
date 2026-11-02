@@ -48,6 +48,7 @@ class ListeningTrackerTest {
         val ended = events.single { it.type == "track_ended" }
         assertEquals("completed", ended.fields["endReason"])
         assertEquals(180_000L, ended.fields["playedMs"])
+        assertEquals(180_000L, ended.fields["rawPlayedMs"])
         assertEquals("B", events.last { it.type == "track_started" }.fields["title"])
     }
 
@@ -184,6 +185,40 @@ class ListeningTrackerTest {
     }
 
     @Test
+    fun `session_lost не раздувает playedMs сверх длительности`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0, durationMs = 10_000L), 10, 30)
+        tracker.onTick(t(9_000), snap("A", 9_000, durationMs = 10_000L), 10, 30)
+
+        val ended = tracker.onTick(t(15_000), null, 10, 30)
+            .events
+            .single { it.type == "track_ended" }
+
+        assertEquals("session_lost", ended.fields["endReason"])
+        assertEquals(10_000L, ended.fields["playedMs"])
+        assertEquals(15_000L, ended.fields["rawPlayedMs"])
+    }
+
+    @Test
+    fun `unknown без длительности сохраняет raw и не обрезает`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(
+            t(0),
+            snap("A", 0, durationMs = null, source = StockPlayerSources.ACCESSIBILITY),
+            10,
+            30,
+        )
+
+        val ended = tracker.onTick(t(6_000), snap("B", 0), 10, 30)
+            .events
+            .single { it.type == "track_ended" }
+
+        assertEquals("unknown", ended.fields["endReason"])
+        assertEquals(6_000L, ended.fields["playedMs"])
+        assertEquals(6_000L, ended.fields["rawPlayedMs"])
+    }
+
+    @Test
     fun `скачок настенных часов не меняет playedMs`() {
         val tracker = ListeningTracker()
         tracker.onTick(TickTime(wallMs = baseWall, monoMs = 0), snap("A", 0), 10, 30)
@@ -274,6 +309,26 @@ class ListeningTrackerTest {
 
         assertTrue(result.events.none { it.type == "track_ended" || it.type == "track_started" })
         assertEquals(StockPlayerSources.FYT_BROADCAST, result.live?.source)
+    }
+
+    @Test
+    fun `смена fyt_service на accessibility не режет трек`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(
+            t(0),
+            snap("A", 0, source = StockPlayerSources.FYT_SERVICE),
+            10,
+            30,
+        )
+        val result = tracker.onTick(
+            t(1_000),
+            snap("A", 1_000, source = StockPlayerSources.ACCESSIBILITY),
+            10,
+            30,
+        )
+
+        assertTrue(result.events.none { it.type == "track_ended" || it.type == "track_started" })
+        assertEquals(StockPlayerSources.ACCESSIBILITY, result.live?.source)
     }
 
     @Test

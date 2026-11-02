@@ -35,6 +35,24 @@ class StockPlayerParserTest {
     }
 
     @Test
+    fun `broadcast из FYT-сервиса помечается fyt_service`() {
+        val state = StockPlayerParser.fromBroadcast(
+            extras = mapOf(
+                "title" to "Service Song",
+                "play_artist" to "Artist",
+                "play_state" to true,
+            ),
+            nowMs = now,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )
+
+        assertEquals("Service Song", state?.title)
+        assertEquals(StockPlayerSources.FYT_SERVICE, state?.source)
+        assertEquals(StockPlayerProtocol.STOCK_PACKAGE, state?.packageName)
+    }
+
+    @Test
     fun `broadcast игнорирует пустой и Unknown`() {
         assertNull(
             StockPlayerParser.fromBroadcast(
@@ -107,6 +125,61 @@ class StockPlayerParserTest {
         assertEquals("Song Title", state?.title)
         assertEquals("Artist Name", state?.artist)
         assertEquals(StockPlayerSources.NOTIFICATION, state?.source)
+    }
+
+    @Test
+    fun `bridge не даёт accessibility перебить свежий fyt_service`() {
+        StockPlayerBridge.reset()
+        val service = StockPlayerParser.fromBroadcast(
+            extras = mapOf("title" to "Service Song", "play_artist" to "A", "play_state" to true),
+            nowMs = now,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        StockPlayerBridge.update(service)
+
+        val accessibility = StockPlayerParser.fromAccessibility(
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            texts = listOf("Other Song", "B"),
+            playing = true,
+            nowMs = now + 2_000L,
+        )!!
+        assertTrue(!StockPlayerBridge.update(accessibility))
+        assertEquals("Service Song", StockPlayerBridge.snapshot(now + 2_000L, true)?.title)
+
+        val later = StockPlayerParser.fromAccessibility(
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            texts = listOf("Other Song", "B"),
+            playing = true,
+            nowMs = now + 11_000L,
+        )!!
+        assertTrue(StockPlayerBridge.update(later))
+        assertEquals("Other Song", StockPlayerBridge.snapshot(now + 11_000L, true)?.title)
+        StockPlayerBridge.reset()
+    }
+
+    @Test
+    fun `bridge принимает fyt_service поверх broadcast`() {
+        StockPlayerBridge.reset()
+        val broadcast = StockPlayerParser.fromBroadcast(
+            extras = mapOf("title" to "Broadcast Song", "play_state" to true),
+            nowMs = now,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+        )!!
+        StockPlayerBridge.update(broadcast)
+
+        val service = StockPlayerParser.fromBroadcast(
+            extras = mapOf("title" to "Service Song", "play_state" to true),
+            nowMs = now + 1_000L,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        assertTrue(StockPlayerBridge.update(service))
+        assertEquals(
+            StockPlayerSources.FYT_SERVICE,
+            StockPlayerBridge.snapshot(now + 1_000L, true)?.source,
+        )
+        StockPlayerBridge.reset()
     }
 
     @Test

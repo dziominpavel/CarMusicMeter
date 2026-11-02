@@ -14,7 +14,9 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Process
 import android.os.SystemClock
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -22,16 +24,23 @@ import androidx.core.content.ContextCompat
 import com.example.carmusicmeter.MainActivity
 import com.example.carmusicmeter.R
 import com.example.carmusicmeter.CarMusicMeterApp
+import com.example.carmusicmeter.data.AccessibilityConnection
 import com.example.carmusicmeter.data.CaptureErrorThrottle
+import com.example.carmusicmeter.data.CaptureGap
 import com.example.carmusicmeter.data.CaptureHealth
 import com.example.carmusicmeter.data.CaptureWrite
 import com.example.carmusicmeter.data.CaptureWriteException
 import com.example.carmusicmeter.data.ClockJumpDetector
+import com.example.carmusicmeter.data.FytMetadataStatus
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.ListeningTracker
 import com.example.carmusicmeter.data.LiveTrack
 import com.example.carmusicmeter.data.LogEvent
+import com.example.carmusicmeter.data.MediaButtonEvent
 import com.example.carmusicmeter.data.MediaPhase
+import com.example.carmusicmeter.data.NoSourceGapTracker
+import com.example.carmusicmeter.data.ServiceProcessInfo
+import com.example.carmusicmeter.data.ServiceStartGate
 import com.example.carmusicmeter.data.SourcePicker
 import com.example.carmusicmeter.data.StockPlayerBridge
 import com.example.carmusicmeter.data.StockPlayerParser
@@ -76,7 +85,12 @@ class MediaWatchService : Service() {
     private var lastNotificationSignature: String? = null
     private var lastTeyesSignature: String? = null
     private var lastStockSignature: String? = null
-    private var startEventLogged = false
+    private var lastAccessibilityEnabled: Boolean? = null
+    private var lastAccessibilityConnected: Boolean? = null
+    private val noSourceGap = NoSourceGapTracker()
+    private val startGate = ServiceStartGate()
+    private val serviceStartedMonoMs = SystemClock.elapsedRealtime()
+    private var stopReason = "destroy"
     private var lastCaptureErrorLoggedAt: Long? = null
     private var lastLive: LiveTrack? = null
     private var lastReading = VolumeReading(0, 0, VolumeSource.AUDIO)
@@ -118,6 +132,28 @@ class MediaWatchService : Service() {
         }
     }
 
+    private val mediaButtonReceiver = object : BroadcastReceiver() {
+        @Suppress("DEPRECATION")
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != Intent.ACTION_MEDIA_BUTTON) return
+            val keyEvent = intent.getParcelableExtra(Intent.EXTRA_KEY_EVENT) as? KeyEvent ?: return
+            val event = MediaButtonEvent.fromKey(
+                keyCode = keyEvent.keyCode,
+                action = keyEvent.action,
+                eventTime = keyEvent.eventTime,
+                repeatCount = keyEvent.repeatCount,
+                sourcePackage = intent.getStringExtra("sourcePak"),
+            ) ?: return
+            val logEvent = event.toLogEvent(System.currentTimeMillis(), lastLive)
+            scope.launch(Dispatchers.IO) {
+                runCatching {
+                    app.eventLog.append(logEvent)
+                    ListeningRepository.record(listOf(logEvent))
+                }
+            }
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         probe = MediaSessionProbe(this)
@@ -126,6 +162,7 @@ class MediaWatchService : Service() {
         snapshotWriter = SnapshotWriter(this, probe)
         teyes = TeyesToolkitClient(this).also { it.start() }
         registerStockReceiver()
+        registerMediaButtonReceiver()
         health = CaptureHealth()
         notificationAccess = probe.hasNotificationAccess()
         ListeningRepository.updateCaptureHealth(health)
@@ -149,6 +186,18 @@ class MediaWatchService : Service() {
         }
     }
 
+    private fun registerMediaButtonReceiver() {
+        val filter = IntentFilter(Intent.ACTION_MEDIA_BUTTON)
+        runCatching {
+            ContextCompat.registerReceiver(
+                this,
+                mediaButtonReceiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+        }
+    }
+
     @Suppress("DEPRECATION")
     private fun bundleToMap(bundle: Bundle?): Map<String, Any?> {
         if (bundle == null) return emptyMap()
@@ -156,6 +205,11 @@ class MediaWatchService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            stopReason = "manual"
+            stopSelf()
+            return START_NOT_STICKY
+        }
         stopping = false
         startForegroundCompat()
         logServiceStart(intent)
@@ -166,14 +220,18 @@ class MediaWatchService : Service() {
     }
 
     private fun logServiceStart(intent: Intent?) {
-        if (startEventLogged) return
+        if (!startGate.shouldLog()) return
         val source = intent?.getStringExtra(WatchServiceController.EXTRA_SOURCE) ?: "system_restart"
-        startEventLogged = true
+        val pid = Process.myPid()
         app.eventLog.append(
             LogEvent(
                 ts = System.currentTimeMillis(),
                 type = "service_started",
-                fields = mapOf("source" to source),
+                fields = linkedMapOf(
+                    "source" to source,
+                    "pid" to pid,
+                    "newProcess" to ServiceProcessInfo.newProcess(pid),
+                ),
             ),
         )
     }
@@ -198,6 +256,20 @@ class MediaWatchService : Service() {
             ListeningRepository.updateCaptureHealth(health)
         }
 
+        runCatching {
+            app.eventLog.append(
+                LogEvent(
+                    ts = System.currentTimeMillis(),
+                    type = "service_stopped",
+                    fields = linkedMapOf(
+                        "reason" to stopReason,
+                        "pid" to Process.myPid(),
+                        "uptimeMs" to (SystemClock.elapsedRealtime() - serviceStartedMonoMs)
+                            .coerceAtLeast(0L),
+                    ),
+                ),
+            )
+        }
         ListeningRepository.setServiceRunning(false)
         ListeningRepository.updateLive(
             live = null,
@@ -207,6 +279,7 @@ class MediaWatchService : Service() {
             error = null,
         )
         runCatching { unregisterReceiver(stockReceiver) }
+        runCatching { unregisterReceiver(mediaButtonReceiver) }
         teyes.stop()
         scope.cancel()
         super.onDestroy()
@@ -290,6 +363,7 @@ class MediaWatchService : Service() {
         val reading = readVolume()
         val teyesStatus = teyes.status()
         val stockState = StockPlayerBridge.activeState(mono, audioManager.isMusicActive)
+        val accessibilityConnected = AccessibilityConnection.isConnected(mono)
 
         val events = mutableListOf<LogEvent>()
         events += tracker.onVolume(
@@ -302,6 +376,7 @@ class MediaWatchService : Service() {
         )
         events += teyesEventIfChanged(now, teyesStatus)
         events += stockEventIfChanged(now, stockState)
+        events += accessibilityEventIfChanged(now, accessibilityEnabled, accessibilityConnected)
 
         // Сессии — раз в секунду, громкость — каждые полсекунды.
         if (tick % 2L == 0L) {
@@ -317,6 +392,13 @@ class MediaWatchService : Service() {
             stock = stockSnapshot,
             currentPackage = tracker.currentPackage,
         )
+        val noSource = audioManager.isMusicActive && snapshot == null &&
+            (!accessibilityEnabled || !accessibilityConnected)
+        when (noSourceGap.update(noSource)) {
+            true -> events += captureGapEvent(now, active = true, reason = "no_source")
+            false -> events += captureGapEvent(now, active = false, reason = "source_available")
+            null -> Unit
+        }
         val result = tracker.onTick(
             time = time,
             snapshot = snapshot,
@@ -364,6 +446,10 @@ class MediaWatchService : Service() {
             mcuMax = if (reading.source == VolumeSource.MCU) app.prefs.mcuMaxVolume else null,
             stockSource = stockState?.source,
             accessibilityEnabled = accessibilityEnabled,
+            accessibilityConnected = accessibilityConnected,
+            musicActive = audioManager.isMusicActive,
+            fytMetadataReceived = FytMetadataStatus.received,
+            fytMetadataAt = FytMetadataStatus.updatedAtMs,
         )
         updateNotification(result.live, reading, health)
         return if (result.live?.phase == MediaPhase.PLAYING) 500L else 1_000L
@@ -473,6 +559,48 @@ class MediaWatchService : Service() {
                 ),
             ),
         )
+    }
+
+    private fun captureGapEvent(now: Long, active: Boolean, reason: String): LogEvent {
+        val gap = CaptureGap(
+            active = active,
+            reason = reason,
+            last = StockPlayerBridge.latest(),
+            isMusicActive = audioManager.isMusicActive,
+            windows = emptyList(),
+        )
+        return LogEvent(now, "capture_gap", gap.toFields())
+    }
+
+    private fun accessibilityEventIfChanged(
+        now: Long,
+        enabled: Boolean,
+        connected: Boolean,
+    ): List<LogEvent> {
+        val previousEnabled = lastAccessibilityEnabled
+        val previousConnected = lastAccessibilityConnected
+        lastAccessibilityEnabled = enabled
+        lastAccessibilityConnected = connected
+        if (previousEnabled == enabled && previousConnected == connected) return emptyList()
+
+        val events = mutableListOf<LogEvent>()
+        events += LogEvent(
+            ts = now,
+            type = "accessibility_state_changed",
+            fields = linkedMapOf(
+                "enabled" to enabled,
+                "connected" to connected,
+                "initial" to (previousEnabled == null && previousConnected == null),
+            ),
+        )
+        if (previousConnected == true && !connected) {
+            events += LogEvent(
+                ts = now,
+                type = "accessibility_disconnected",
+                fields = linkedMapOf("enabled" to enabled),
+            )
+        }
+        return events
     }
 
     private fun stockEventIfChanged(
@@ -597,6 +725,7 @@ class MediaWatchService : Service() {
 
     companion object {
         const val NOTIFICATION_ID = 1001
+        const val ACTION_STOP = "com.example.carmusicmeter.action.STOP"
         private const val FINALIZE_TIMEOUT_MS = 2_000L
     }
 }

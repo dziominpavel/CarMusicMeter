@@ -11,8 +11,10 @@ enum class StartSource(val value: String) {
     ACCESSIBILITY("accessibility"),
     APP_OPEN("app_open"),
     JOB("job"),
+    WATCHDOG("watchdog"),
     MEDIA_MOUNTED("media_mounted"),
     TEYES_AUTOSTART("teyes_autostart"),
+    FYT_SERVICE("fyt_service"),
 }
 
 object WatchServiceController {
@@ -26,6 +28,11 @@ object WatchServiceController {
     }
 
     fun stop(context: Context) {
-        context.stopService(Intent(context, MediaWatchService::class.java))
+        val stop = Intent(context, MediaWatchService::class.java)
+            .setAction(MediaWatchService.ACTION_STOP)
+        val started = runCatching { context.startService(stop) }.isSuccess
+        if (!started) {
+            context.stopService(Intent(context, MediaWatchService::class.java))
+        }
     }
 }

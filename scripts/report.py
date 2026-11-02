@@ -354,6 +354,7 @@ def analyze(events: list[dict], session_gap_ms: int):
             track["plays"].append({
                 "startedAt": int(event.get("startedAt") or start.get("ts") or ts),
                 "played": played,
+                "raw_played": int(event.get("rawPlayedMs") or played),
                 "duration": duration,
                 "end_pos": end_pos,
                 "reason": event.get("endReason"),
@@ -393,6 +394,11 @@ def analyze(events: list[dict], session_gap_ms: int):
             open_play = {
                 "startedAt": start["ts"],
                 "played": (
+                    checkpoint["played"] if use_checkpoint
+                    else pause["played"] if use_pause
+                    else 0
+                ),
+                "raw_played": (
                     checkpoint["played"] if use_checkpoint
                     else pause["played"] if use_pause
                     else 0
@@ -450,8 +456,10 @@ def analyze(events: list[dict], session_gap_ms: int):
         rated_plays = sum(1 for play in closed if play["reason"] in RATED_REASONS)
         early = sum(1 for point in skip_points if point < 0.25)
         played_total = sum(play["played"] for play in closed)
+        raw_played_total = sum(play.get("raw_played", play["played"]) for play in closed)
         if open_play:
             played_total += open_play["played"]
+            raw_played_total += open_play.get("raw_played", open_play["played"])
         plays_total = len(track["starts"])
         closed_total = len(closed)
         durations = [play["duration"] for play in closed if play.get("duration")]
@@ -477,6 +485,8 @@ def analyze(events: list[dict], session_gap_ms: int):
             "stopped": stopped,
             "unknown": unknown,
             "played_ms": played_total,
+            "raw_played_ms": raw_played_total,
+            "censored_ms": max(0, raw_played_total - played_total),
             "duration_ms": track_duration,
             "completion": statistics.mean(completions) if completions else None,
             "listened": statistics.mean(listened_values) if listened_values else None,
@@ -548,6 +558,28 @@ def capture_gap_summary(events: list[dict]) -> dict:
     }
 
 
+def media_button_summary(events: list[dict]) -> dict:
+    """Считает нажатия, не удваивая down/up."""
+    stats = {"next": 0, "previous": 0, "play_pause": 0, "other": 0, "total": 0}
+    for event in events:
+        if event.get("type") != "media_button":
+            continue
+        action = event.get("action")
+        if action not in (None, "down"):
+            continue
+        key = str(event.get("key") or "")
+        if key == "media_next":
+            stats["next"] += 1
+        elif key == "media_previous":
+            stats["previous"] += 1
+        elif key == "media_play_pause":
+            stats["play_pause"] += 1
+        else:
+            stats["other"] += 1
+        stats["total"] += 1
+    return stats
+
+
 def delete_candidates(metrics: list[dict], min_plays: int, min_duration: int) -> list[dict]:
     candidates = []
     for track in metrics:
@@ -605,7 +637,7 @@ def render_table(metrics: list[dict], limit: int) -> str:
 def render_report(
     metrics, sessions, manifests, sources, event_count,
     malformed, problems, position_resets, args,
-    source_stats=None, gap_stats=None,
+    source_stats=None, gap_stats=None, media_stats=None,
 ):
     total_played = sum(track["played_ms"] or 0 for track in metrics)
     closed = sum(track["closed_plays"] for track in metrics)
@@ -620,6 +652,10 @@ def render_report(
     unknown = sum(track["unknown"] for track in metrics)
     source_stats = source_stats or {}
     gap_stats = gap_stats or {"count": 0, "last_ts": None, "reasons": {}}
+    media_stats = media_stats or {
+        "next": 0, "previous": 0, "play_pause": 0, "other": 0, "total": 0,
+    }
+    censored = sum(track["censored_ms"] for track in metrics)
     opens = sum(1 for track in metrics if track["open"])
     first_ts = sessions[0]["start"] if sessions else None
     last_ts = sessions[-1]["end"] if sessions else None
@@ -665,9 +701,21 @@ def render_report(
         f"session_lost: {session_lost} · not_played: {not_played} · "
         f"stopped: {stopped} · unknown: {unknown}"
     )
+    if censored:
+        lines.append(f"Цензурировано (rawPlayedMs > playedMs): {fmt_ms(censored)}")
+    if media_stats.get("total"):
+        lines.append(
+            f"Кнопки: next {media_stats['next']} · previous {media_stats['previous']} · "
+            f"play_pause {media_stats['play_pause']}"
+        )
     if gap_stats.get("count"):
         last_gap = time_of(gap_stats["last_ts"]) if gap_stats.get("last_ts") else "-"
-        lines.append(f"Разрывы сбора: {gap_stats['count']} · последний: {last_gap}")
+        reasons = ", ".join(
+            f"{reason}: {count}"
+            for reason, count in sorted(gap_stats.get("reasons", {}).items())
+        )
+        suffix = f" ({reasons})" if reasons else ""
+        lines.append(f"Разрывы сбора: {gap_stats['count']} · последний: {last_gap}{suffix}")
     if source_stats:
         lines.append("По источникам:")
         for source, item in source_stats.items():
@@ -710,12 +758,14 @@ def main() -> int:
     )
     source_stats = source_summary(events)
     gap_stats = capture_gap_summary(events)
+    media_stats = media_button_summary(events)
 
     if args.csv:
         fields = [
             "key", "package", "title", "artist", "plays", "closed_plays", "rated_plays", "open",
             "completed", "skipped", "interrupted", "service_stopped", "session_lost",
-            "not_played", "stopped", "unknown", "played_ms", "duration_ms", "completion", "listened", "skip_rate",
+            "not_played", "stopped", "unknown", "played_ms", "raw_played_ms", "censored_ms",
+            "duration_ms", "completion", "listened", "skip_rate",
             "early_skip_rate", "early_skips", "avg_skip_pct", "volume_delta", "volume_vs_trip",
             "volume_changes", "volume_up", "volume_down", "seek_back", "seek_fwd", "days",
             "last_played",
@@ -754,9 +804,12 @@ def main() -> int:
             "open": sum(1 for track in metrics if track["open"]),
             "position_resets": position_resets,
             "capture_gaps": gap_stats["count"],
+            "censored_ms": sum(track["censored_ms"] for track in metrics),
+            "media_buttons": media_stats["total"],
         },
         "source_stats": source_stats,
         "capture_gaps": gap_stats,
+        "media_buttons": media_stats,
         "tracks": metrics,
         "delete_candidates": delete_candidates(metrics, args.min_plays, args.min_duration),
     }
@@ -768,7 +821,7 @@ def main() -> int:
     else:
         print(render_report(
             metrics, sessions, manifests, sources, len(events), malformed,
-            problems, position_resets, args, source_stats, gap_stats,
+            problems, position_resets, args, source_stats, gap_stats, media_stats,
         ))
 
     if problems and args.strict:

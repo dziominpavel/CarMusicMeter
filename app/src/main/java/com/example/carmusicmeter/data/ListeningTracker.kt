@@ -553,6 +553,14 @@ class ListeningTracker {
             else -> "interrupted"
         }
 
+        val rawPlayedMs = active.playedMs
+        val technical = reason in setOf("session_lost", "service_stopped", "stopped", "unknown")
+        val playedMs = if (technical && duration != null) {
+            minOf(rawPlayedMs, duration)
+        } else {
+            rawPlayedMs
+        }
+
         return LogEvent(
             ts = time.wallMs,
             type = "track_ended",
@@ -565,7 +573,8 @@ class ListeningTracker {
                 "album" to active.snapshot.album,
                 "mediaId" to active.snapshot.mediaId,
                 "durationMs" to duration,
-                "playedMs" to active.playedMs,
+                "playedMs" to playedMs,
+                "rawPlayedMs" to rawPlayedMs,
                 "endPositionMs" to endPosition,
                 "endReason" to reason,
                 "completed" to (reason == "completed"),

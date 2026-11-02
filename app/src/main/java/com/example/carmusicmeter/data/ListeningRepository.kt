@@ -10,6 +10,10 @@ data class LiveState(
     val serviceRunning: Boolean = false,
     val notificationAccess: Boolean = false,
     val accessibilityEnabled: Boolean = false,
+    val accessibilityConnected: Boolean = false,
+    val musicActive: Boolean = false,
+    val fytMetadataReceived: Boolean = false,
+    val fytMetadataAt: Long? = null,
     val batteryUnrestricted: Boolean = false,
     val live: LiveTrack? = null,
     val volume: Int = 0,
@@ -60,6 +64,10 @@ object ListeningRepository {
         _state.update { it.copy(accessibilityEnabled = enabled) }
     }
 
+    fun setAccessibilityConnected(connected: Boolean) {
+        _state.update { it.copy(accessibilityConnected = connected) }
+    }
+
     fun setBatteryUnrestricted(unrestricted: Boolean) {
         _state.update { it.copy(batteryUnrestricted = unrestricted) }
     }
@@ -90,6 +98,10 @@ object ListeningRepository {
         mcuMax: Int? = null,
         stockSource: String? = null,
         accessibilityEnabled: Boolean = false,
+        accessibilityConnected: Boolean = false,
+        musicActive: Boolean = false,
+        fytMetadataReceived: Boolean = false,
+        fytMetadataAt: Long? = null,
     ) {
         _state.update { previous ->
             val newSession = live != null && live.packageName != previous.live?.packageName
@@ -105,6 +117,10 @@ object ListeningRepository {
                 mcuMax = mcuMax,
                 stockSource = stockSource,
                 accessibilityEnabled = accessibilityEnabled,
+                accessibilityConnected = accessibilityConnected,
+                musicActive = musicActive,
+                fytMetadataReceived = fytMetadataReceived,
+                fytMetadataAt = fytMetadataAt,
                 notificationAccess = notificationAccess,
                 error = error,
                 sessionsSeen = if (newSession) previous.sessionsSeen + 1 else previous.sessionsSeen,

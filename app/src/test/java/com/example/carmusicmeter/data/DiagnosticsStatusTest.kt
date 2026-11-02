@@ -2,6 +2,7 @@ package com.example.carmusicmeter.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -107,6 +108,22 @@ class DiagnosticsStatusTest {
         val fields = StockPlayerUiEvent(window, listOf(window), result).toFields()
 
         assertEquals(60, (fields["nodes"] as List<*>).size)
+    }
+
+    @Test
+    fun `capture_gap без последнего трека пишет null`() {
+        val fields = CaptureGap(
+            active = true,
+            reason = "no_source",
+            last = null,
+            isMusicActive = true,
+            windows = emptyList(),
+        ).toFields()
+
+        assertEquals(true, fields["active"])
+        assertEquals("no_source", fields["reason"])
+        assertNull(fields["lastTitle"])
+        assertNull(fields["lastArtist"])
     }
 
     @Test

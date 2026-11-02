@@ -47,6 +47,38 @@ class StockPlayerStateTest {
     }
 
     @Test
+    fun `fyt_service истекает за тридцать секунд при игре`() {
+        val value = state(source = StockPlayerSources.FYT_SERVICE, updatedAtMonoMs = 0L)
+
+        assertNotNull(value.toSnapshot(29_999L, isMusicActive = true))
+        assertNull(value.toSnapshot(30_001L, isMusicActive = true))
+    }
+
+    @Test
+    fun `fyt_service на паузе живёт десять минут`() {
+        val value = state(
+            playing = false,
+            source = StockPlayerSources.FYT_SERVICE,
+            updatedAtMonoMs = 0L,
+        )
+
+        assertNotNull(value.toSnapshot(9 * 60_000L, isMusicActive = false))
+        assertNull(value.toSnapshot(10 * 60_000L + 1L, isMusicActive = false))
+    }
+
+    @Test
+    fun `fyt_service без play state использует isMusicActive`() {
+        val value = state(
+            playing = false,
+            playingKnown = false,
+            source = StockPlayerSources.FYT_SERVICE,
+        )
+
+        assertEquals(MediaPhase.PLAYING, value.toSnapshot(20_000L, isMusicActive = true)?.phase)
+        assertEquals(MediaPhase.PAUSED, value.toSnapshot(20_000L, isMusicActive = false)?.phase)
+    }
+
+    @Test
     fun `уведомление не считается играющим без активной музыки`() {
         val value = state(
             playing = true,

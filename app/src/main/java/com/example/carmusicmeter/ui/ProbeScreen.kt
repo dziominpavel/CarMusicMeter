@@ -95,6 +95,9 @@ fun ProbeScreen(
         CaptureHealthCard(state)
         LiveCard(state)
         StockPlayerCard(state = state, onOpenAccessibilitySettings = onOpenAccessibilitySettings)
+        if (state.musicActive && state.live == null && state.stockSource == null) {
+            SourceWarningCard()
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
                 onClick = onSnapshot,
@@ -423,14 +426,31 @@ private fun StockPlayerCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            Text(
+                text = "Сервис FYT: " + if (state.fytMetadataReceived) {
+                    "данные есть" +
+                        state.fytMetadataAt?.let { " · ${formatClock(it)}" }.orEmpty()
+                } else {
+                    "нет данных"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (state.fytMetadataReceived) StatusOk else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
             Row(verticalAlignment = Alignment.CenterVertically) {
+                val accessOk = state.accessibilityEnabled && state.accessibilityConnected
+                val accessText = when {
+                    state.accessibilityEnabled && state.accessibilityConnected ->
+                        "включено, сервис подключён"
+                    state.accessibilityEnabled -> "включено, сервис не подключён"
+                    else -> "выключено"
+                }
                 Column(Modifier.weight(1f)) {
                     Text("Чтение интерфейса", style = MaterialTheme.typography.bodyMedium)
                     Text(
-                        text = if (state.accessibilityEnabled) "включено" else "выключено",
+                        text = accessText,
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (state.accessibilityEnabled) StatusOk else StatusWarn,
+                        color = if (accessOk) StatusOk else StatusWarn,
                     )
                 }
                 TextButton(onClick = onOpenAccessibilitySettings) {
@@ -785,12 +805,40 @@ private fun volumeLabel(live: LiveTrack): String {
 
 private fun sourceLabel(source: String?): String = when (source) {
     "media_session" -> "MediaSession"
+    "fyt_service" -> "сервис FYT"
     "fyt_broadcast" -> "лаунчер"
     "accessibility" -> "интерфейс"
     "notification" -> "уведомление"
     "mcu" -> "MCU"
     "audio" -> "Android"
     else -> source ?: "—"
+}
+
+@Composable
+private fun SourceWarningCard() {
+    Card(
+        shape = CardShape,
+        colors = CardDefaults.cardColors(containerColor = StatusWarn.copy(alpha = 0.12f)),
+        border = BorderStroke(1.dp, StatusWarn.copy(alpha = 0.35f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "Музыка играет, источника нет",
+                style = MaterialTheme.typography.titleMedium,
+                color = StatusWarn,
+            )
+            Text(
+                text = "Включите чтение интерфейса или проверьте, что приложение " +
+                    "установлено под com.syu.widget.music: оно не видит ни окно плеера, " +
+                    "ни сервис метаданных.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
 }
 
 @Composable

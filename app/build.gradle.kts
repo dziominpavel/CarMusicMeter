@@ -27,7 +27,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.carmusicmeter"
+        // Штатный плеер Teyes адресует com.fyt.launcher.music конкретным
+        // пакетам; com.syu.widget.music на проверенном CC3 свободен.
+        applicationId = "com.syu.widget.music"
         // 29 = Android 10: штатная магнитола Teyes CC3. Телефон для отладки тоже подходит.
         minSdk = 29
         targetSdk = 36

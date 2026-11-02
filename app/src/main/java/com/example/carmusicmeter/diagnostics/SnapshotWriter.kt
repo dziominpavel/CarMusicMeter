@@ -4,9 +4,12 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
+import android.os.SystemClock
 import com.example.carmusicmeter.BuildConfig
 import com.example.carmusicmeter.CarMusicMeterApp
+import com.example.carmusicmeter.data.AccessibilityConnection
 import com.example.carmusicmeter.data.AudioDiagnostics
+import com.example.carmusicmeter.data.FytMetadataStatus
 import com.example.carmusicmeter.data.Json
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.LiveTrack
@@ -75,6 +78,11 @@ class SnapshotWriter(
                 listenerConnected = NotificationListenerStatus.connected,
             ).forEach { (key, value) -> put(key, value) }
             put("accessibilityEnabled", state.accessibilityEnabled)
+            put(
+                "accessibilityConnected",
+                AccessibilityConnection.isConnected(SystemClock.elapsedRealtime()),
+            )
+            put("fytMetadataService", FytMetadataStatus.toJson())
             put("serviceRunning", state.serviceRunning)
             put("volume", JSONObject().apply {
                 put("music", volume)

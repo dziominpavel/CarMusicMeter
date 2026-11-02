@@ -33,11 +33,13 @@ data class StockPlayerState(
             source == StockPlayerSources.ACCESSIBILITY -> playing || isMusicActive
             source == StockPlayerSources.NOTIFICATION -> isMusicActive
             source == StockPlayerSources.FYT_BROADCAST && !playingKnown -> isMusicActive
+            source == StockPlayerSources.FYT_SERVICE && !playingKnown -> isMusicActive
             else -> playing
         }
         val age = (nowMonoMs - updatedAtMonoMs).coerceAtLeast(0L)
         val staleAfter = when {
             !effectivePlaying -> PAUSED_STALE_MS
+            source == StockPlayerSources.FYT_SERVICE -> FYT_SERVICE_STALE_MS
             source == StockPlayerSources.ACCESSIBILITY -> ACCESSIBILITY_STALE_MS
             else -> PLAYING_STALE_MS
         }
@@ -57,6 +59,7 @@ data class StockPlayerState(
             actions = 0L,
             mediaId = path,
             metadataKeys = when (source) {
+                StockPlayerSources.FYT_SERVICE,
                 StockPlayerSources.FYT_BROADCAST -> listOf(
                     "fyt.title", "fyt.artist", "fyt.album", "fyt.path", "fyt.state",
                 )
@@ -70,6 +73,7 @@ data class StockPlayerState(
 
     private companion object {
         const val PLAYING_STALE_MS = 30 * 60_000L
+        const val FYT_SERVICE_STALE_MS = 30_000L
         const val ACCESSIBILITY_STALE_MS = 90_000L
         const val PAUSED_STALE_MS = 10 * 60_000L
     }
@@ -90,6 +94,22 @@ object StockPlayerBridge {
     @Volatile
     private var current: StockPlayerState? = null
 
+    private fun priority(source: String): Int = when (source) {
+        StockPlayerSources.FYT_SERVICE -> 4
+        StockPlayerSources.FYT_BROADCAST -> 3
+        StockPlayerSources.ACCESSIBILITY -> 2
+        StockPlayerSources.NOTIFICATION -> 1
+        else -> 0
+    }
+
+    private fun graceMs(oldSource: String, newSource: String): Long = when {
+        oldSource == StockPlayerSources.FYT_SERVICE -> BROADCAST_GRACE_MS
+        oldSource == StockPlayerSources.FYT_BROADCAST -> BROADCAST_GRACE_MS
+        oldSource == StockPlayerSources.ACCESSIBILITY &&
+            newSource == StockPlayerSources.NOTIFICATION -> ACCESSIBILITY_GRACE_MS
+        else -> 0L
+    }
+
     @Synchronized
     fun latest(): StockPlayerState? = current
 
@@ -104,15 +124,8 @@ object StockPlayerBridge {
     @Synchronized
     fun update(state: StockPlayerState): Boolean {
         val old = current
-        if (old != null && old.source == StockPlayerSources.FYT_BROADCAST &&
-            state.source != StockPlayerSources.FYT_BROADCAST &&
-            state.updatedAtMonoMs - old.updatedAtMonoMs < BROADCAST_GRACE_MS
-        ) {
-            return false
-        }
-        if (old != null && old.source == StockPlayerSources.ACCESSIBILITY &&
-            state.source == StockPlayerSources.NOTIFICATION &&
-            state.updatedAtMonoMs - old.updatedAtMonoMs < ACCESSIBILITY_GRACE_MS
+        if (old != null && priority(state.source) < priority(old.source) &&
+            state.updatedAtMonoMs - old.updatedAtMonoMs < graceMs(old.source, state.source)
         ) {
             return false
         }

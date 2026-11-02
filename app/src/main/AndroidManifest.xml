@@ -89,6 +89,14 @@
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
+        <service
+            android:name=".service.FytMetadataService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.fyt.launcher.music" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".receiver.BootReceiver"
             android:enabled="true"
