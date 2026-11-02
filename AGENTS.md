@@ -33,6 +33,16 @@ MediaSession и медиа-уведомления, опрашивает гром
 - `diagnostics/SnapshotWriter.kt` — снимок окружения и всех сессий
 - `openspec/specs/` — `playback-capture`, `volume-tracking`, `event-log`
 
+### Сборка APK (единственный путь)
+
+- Собирать только `build-apk.bat` (`debug` / `release`); `gradlew assemble*` напрямую —
+  лишь для проверки компиляции, артефакт из него не берётся.
+- Путь к готовому файлу всегда один: `dist\CarMusicMeter-<mode>-latest.apk`.
+  История версий — `dist\archive\CarMusicMeter-<version>-<mode>.apk`.
+- Не предлагать пользователю и не описывать `app\build\outputs\...` — это внутренний
+  каталог Gradle, для установки он не используется.
+- `dist\` в git не попадает; старые ассеты убирать в `dist\archive\`.
+
 ### Железо и ограничения (важно)
 
 - Магнитола **Teyes CC3**, Android 10, коллекция на USB, штатный плеер остаётся:
