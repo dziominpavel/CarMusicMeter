@@ -27,6 +27,28 @@ fun formatBytes(bytes: Long): String = when {
     else -> "$bytes Б"
 }
 
+fun sourceLabel(source: String?): String = when (source) {
+    "media_session" -> "MediaSession"
+    "fyt_service" -> "сервис FYT"
+    "fyt_broadcast" -> "лаунчер"
+    "accessibility" -> "интерфейс"
+    "notification" -> "уведомление"
+    "mcu" -> "MCU"
+    "audio" -> "Android"
+    else -> source ?: "—"
+}
+
+fun pluralFiles(n: Int): String {
+    val mod100 = n % 100
+    val mod10 = n % 10
+    return when {
+        mod100 in 11..14 -> "файлов"
+        mod10 == 1 -> "файл"
+        mod10 in 2..4 -> "файла"
+        else -> "файлов"
+    }
+}
+
 fun reasonLabel(reason: Any?): String = when (reason?.toString()) {
     "completed" -> "дослушан"
     "skipped" -> "пропущен"

@@ -37,6 +37,7 @@ class NotificationWatchService : NotificationListenerService() {
         super.onListenerConnected()
         NotificationListenerStatus.connected = true
         ListeningRepository.setNotificationAccess(true)
+        ListeningRepository.setNotificationListenerConnected(true)
         app.eventLog.append(
             LogEvent(System.currentTimeMillis(), "notification_listener_connected"),
         )
@@ -46,6 +47,7 @@ class NotificationWatchService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         NotificationListenerStatus.connected = false
         ListeningRepository.setNotificationAccess(false)
+        ListeningRepository.setNotificationListenerConnected(false)
         app.eventLog.append(
             LogEvent(System.currentTimeMillis(), "notification_listener_disconnected"),
         )
@@ -54,6 +56,7 @@ class NotificationWatchService : NotificationListenerService() {
 
     override fun onDestroy() {
         NotificationListenerStatus.connected = false
+        ListeningRepository.setNotificationListenerConnected(false)
         ioScope.cancel()
         super.onDestroy()
     }

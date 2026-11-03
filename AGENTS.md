@@ -24,7 +24,8 @@ MediaSession и медиа-уведомления, опрашивает гром
 
 ### Ключевые пути
 
-- `MainActivity` → `ui/ProbeScreen.kt` — экран диагностики
+- `MainActivity` → `ui/DashboardScreen.kt`, `ui/DiagnosticsScreen.kt`,
+  `ui/SettingsScreen.kt` — пульт, диагностика и настройки
 - `service/MediaWatchService.kt` — цикл опроса, foreground-служба, уведомление
 - `service/NotificationWatchService.kt` — доступ к уведомлениям и резервный источник
 - `data/ListeningTracker.kt` — старт/конец трека, пропуск, пауза, перемотка

@@ -62,7 +62,7 @@ fun ExportDialog(
                     text = when {
                         plan == null -> "Считаю объём…"
                         plan.isEmpty -> "Нет данных за период"
-                        else -> "${plan.files.size} файлов · ${formatBytes(plan.totalBytes)}"
+                        else -> "${plan.files.size} ${pluralFiles(plan.files.size)} · ${formatBytes(plan.totalBytes)}"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (plan?.isEmpty == true) {

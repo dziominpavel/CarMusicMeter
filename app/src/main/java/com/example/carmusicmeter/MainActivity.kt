@@ -12,6 +12,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -21,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -33,6 +35,7 @@ import com.example.carmusicmeter.data.ExportPlan
 import com.example.carmusicmeter.data.ExportRange
 import com.example.carmusicmeter.data.ExportStorage
 import com.example.carmusicmeter.data.ListeningRepository
+import com.example.carmusicmeter.data.NotificationListenerStatus
 import com.example.carmusicmeter.data.Prefs
 import com.example.carmusicmeter.data.RetentionPlan
 import com.example.carmusicmeter.data.StoragePolicy
@@ -49,7 +52,9 @@ import com.example.carmusicmeter.ui.ExportDialog
 import com.example.carmusicmeter.ui.ExportProgressDialog
 import com.example.carmusicmeter.ui.ExportResult
 import com.example.carmusicmeter.ui.ExportResultDialog
-import com.example.carmusicmeter.ui.ProbeScreen
+import com.example.carmusicmeter.ui.DashboardScreen
+import com.example.carmusicmeter.ui.DiagnosticsScreen
+import com.example.carmusicmeter.ui.SettingsScreen
 import com.example.carmusicmeter.ui.theme.CarMusicMeterTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,6 +62,12 @@ import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private enum class AppScreen {
+    DASHBOARD,
+    DIAGNOSTICS,
+    SETTINGS,
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -94,6 +105,11 @@ class MainActivity : ComponentActivity() {
                 var exportPlan by remember { mutableStateOf<ExportPlan?>(null) }
                 var pendingRetention by remember { mutableStateOf<RetentionPlan?>(null) }
                 var pendingRetentionDays by remember { mutableStateOf<Int?>(null) }
+                var screenName by rememberSaveable { mutableStateOf(AppScreen.DASHBOARD.name) }
+
+                BackHandler(enabled = screenName != AppScreen.DASHBOARD.name) {
+                    screenName = AppScreen.DASHBOARD.name
+                }
 
                 val applyRetention: (Int) -> Unit = { days ->
                     retentionDays = days
@@ -141,76 +157,103 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                ProbeScreen(
-                    state = state,
-                    autoStart = autoStart,
-                    storageStats = stats,
-                    retentionDays = retentionDays,
-                    exportRange = exportRange,
-                    onAutoStartChange = { enabled ->
-                        autoStart = enabled
-                        prefs.autoStart = enabled
-                        AutostartScheduler.sync(this@MainActivity, enabled)
-                        if (enabled && !state.serviceRunning) {
-                            runCatching {
-                                WatchServiceController.start(this@MainActivity, StartSource.APP_OPEN)
-                            }
-                        }
-                        toast(if (enabled) "Автозапуск включён" else "Автозапуск выключен")
-                    },
-                    onRetentionChange = { days ->
-                        if (days == 0) {
-                            applyRetention(days)
-                        } else {
-                            lifecycleScope.launch {
-                                val plan = withContext(Dispatchers.IO) {
-                                    app.eventLog.planTrim(
-                                        StoragePolicy(
-                                            retentionDays = days,
-                                            maxBytes = prefs.maxBytes,
-                                        ),
-                                    )
+                LaunchedEffect(screenName) {
+                    if (screenName == AppScreen.SETTINGS.name) {
+                        refreshStorageStats()
+                    }
+                }
+
+                val onStartService: () -> Unit = {
+                    runCatching {
+                        WatchServiceController.start(this@MainActivity, StartSource.MANUAL)
+                    }
+                        .onSuccess { toast("Служба запускается") }
+                        .onFailure { toast("Не удалось запустить: ${it.message}") }
+                }
+                val onStopService: () -> Unit = {
+                    WatchServiceController.stop(this@MainActivity)
+                    toast("Служба остановлена")
+                }
+                val onOpenNotificationAccess: () -> Unit = {
+                    runCatching {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    }.onFailure {
+                        toast("Открой настройки вручную: Приложения → Спецдоступ → Доступ к уведомлениям")
+                    }
+                }
+                val onOpenBatterySettings: () -> Unit = { openBatterySettings() }
+                val onOpenAccessibilitySettings: () -> Unit = {
+                    if (!AccessibilityAccess.openSettings(this@MainActivity)) {
+                        toast("Открой Настройки → Спецдоступ → Спецвозможности")
+                    }
+                }
+                val onSnapshot: () -> Unit = { takeSnapshot() }
+                val onExport: () -> Unit = { showExportDialog = true }
+
+                when (AppScreen.valueOf(screenName)) {
+                    AppScreen.DASHBOARD -> DashboardScreen(
+                        state = state,
+                        onOpenDiagnostics = { screenName = AppScreen.DIAGNOSTICS.name },
+                        onOpenSettings = { screenName = AppScreen.SETTINGS.name },
+                        onStartService = onStartService,
+                        onOpenNotificationAccess = onOpenNotificationAccess,
+                        onSnapshot = onSnapshot,
+                        onExport = onExport,
+                    )
+
+                    AppScreen.DIAGNOSTICS -> DiagnosticsScreen(
+                        state = state,
+                        onBack = { screenName = AppScreen.DASHBOARD.name },
+                        onStartService = onStartService,
+                        onStopService = onStopService,
+                        onOpenNotificationAccess = onOpenNotificationAccess,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                    )
+
+                    AppScreen.SETTINGS -> SettingsScreen(
+                        state = state,
+                        autoStart = autoStart,
+                        storageStats = stats,
+                        retentionDays = retentionDays,
+                        onBack = { screenName = AppScreen.DASHBOARD.name },
+                        onAutoStartChange = { enabled ->
+                            autoStart = enabled
+                            prefs.autoStart = enabled
+                            AutostartScheduler.sync(this@MainActivity, enabled)
+                            if (enabled && !state.serviceRunning) {
+                                runCatching {
+                                    WatchServiceController.start(this@MainActivity, StartSource.APP_OPEN)
                                 }
-                                if (plan.isEmpty) {
-                                    applyRetention(days)
-                                } else {
-                                    pendingRetentionDays = days
-                                    pendingRetention = plan
+                            }
+                            toast(if (enabled) "Автозапуск включён" else "Автозапуск выключен")
+                        },
+                        onRetentionChange = { days ->
+                            if (days == 0) {
+                                applyRetention(days)
+                            } else {
+                                lifecycleScope.launch {
+                                    val plan = withContext(Dispatchers.IO) {
+                                        app.eventLog.planTrim(
+                                            StoragePolicy(
+                                                retentionDays = days,
+                                                maxBytes = prefs.maxBytes,
+                                            ),
+                                        )
+                                    }
+                                    if (plan.isEmpty) {
+                                        applyRetention(days)
+                                    } else {
+                                        pendingRetentionDays = days
+                                        pendingRetention = plan
+                                    }
                                 }
                             }
-                        }
-                    },
-                    onExportRangeChange = { range ->
-                        exportRange = range
-                        prefs.exportRange = range
-                    },
-                    onStartService = {
-                        runCatching {
-                            WatchServiceController.start(this@MainActivity, StartSource.MANUAL)
-                        }
-                            .onSuccess { toast("Служба запускается") }
-                            .onFailure { toast("Не удалось запустить: ${it.message}") }
-                    },
-                    onStopService = {
-                        WatchServiceController.stop(this@MainActivity)
-                        toast("Служба остановлена")
-                    },
-                    onOpenNotificationAccess = {
-                        runCatching {
-                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                        }.onFailure {
-                            toast("Открой настройки вручную: Приложения → Спецдоступ → Доступ к уведомлениям")
-                        }
-                    },
-                    onOpenBatterySettings = { openBatterySettings() },
-                    onOpenAccessibilitySettings = {
-                        if (!AccessibilityAccess.openSettings(this@MainActivity)) {
-                            toast("Открой Настройки → Спецдоступ → Спецвозможности")
-                        }
-                    },
-                    onSnapshot = { takeSnapshot() },
-                    onExport = { showExportDialog = true },
-                )
+                        },
+                        onOpenNotificationAccess = onOpenNotificationAccess,
+                        onOpenBatterySettings = onOpenBatterySettings,
+                        onOpenAccessibilitySettings = onOpenAccessibilitySettings,
+                    )
+                }
 
                 val retentionPlan = pendingRetention
                 val retentionDaysPending = pendingRetentionDays
@@ -307,6 +350,7 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshEnvironment() {
         ListeningRepository.setNotificationAccess(NotificationAccess.isGranted(this))
+        ListeningRepository.setNotificationListenerConnected(NotificationListenerStatus.connected)
         val power = getSystemService(PowerManager::class.java)
         ListeningRepository.setBatteryUnrestricted(
             power.isIgnoringBatteryOptimizations(packageName),

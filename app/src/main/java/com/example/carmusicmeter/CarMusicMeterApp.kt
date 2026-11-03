@@ -3,7 +3,9 @@ package com.example.carmusicmeter
 import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.os.Build
 import com.example.carmusicmeter.autostart.AutostartScheduler
+import com.example.carmusicmeter.data.DeviceProfile
 import com.example.carmusicmeter.data.EventLog
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.Prefs
@@ -27,6 +29,7 @@ class CarMusicMeterApp : Application() {
         instance = this
         eventLog = EventLog(filesDir)
         prefs = Prefs(this)
+        ListeningRepository.setTeyesDevice(DeviceProfile.isTeyes(Build.MANUFACTURER, Build.MODEL))
         CrashLogger.install(eventLog)
         createNotificationChannel()
         AutostartScheduler.sync(this, prefs.autoStart)

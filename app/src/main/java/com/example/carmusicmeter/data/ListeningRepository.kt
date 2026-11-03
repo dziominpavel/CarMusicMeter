@@ -36,7 +36,13 @@ data class LiveState(
     val captureError: String? = null,
     val captureFailures: Int = 0,
     val droppedEvents: Int = 0,
-)
+    val teyesDevice: Boolean = false,
+    val notificationListenerConnected: Boolean = false,
+) {
+    /** Показывать ли Teyes-специфичные источники и настройки. */
+    val teyesRelevant: Boolean
+        get() = teyesDevice || stockSource != null || fytMetadataReceived || teyesAvailable
+}
 
 /**
  * Единственная точка обмена состоянием между службой и UI.
@@ -58,6 +64,14 @@ object ListeningRepository {
 
     fun setNotificationAccess(granted: Boolean) {
         _state.update { it.copy(notificationAccess = granted) }
+    }
+
+    fun setNotificationListenerConnected(connected: Boolean) {
+        _state.update { it.copy(notificationListenerConnected = connected) }
+    }
+
+    fun setTeyesDevice(teyes: Boolean) {
+        _state.update { it.copy(teyesDevice = teyes) }
     }
 
     fun setAccessibilityEnabled(enabled: Boolean) {

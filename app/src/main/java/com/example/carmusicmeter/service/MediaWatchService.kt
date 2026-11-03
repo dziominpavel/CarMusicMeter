@@ -31,6 +31,7 @@ import com.example.carmusicmeter.data.CaptureHealth
 import com.example.carmusicmeter.data.CaptureWrite
 import com.example.carmusicmeter.data.CaptureWriteException
 import com.example.carmusicmeter.data.ClockJumpDetector
+import com.example.carmusicmeter.data.DeviceProfile
 import com.example.carmusicmeter.data.FytMetadataStatus
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.ListeningTracker
@@ -105,9 +106,7 @@ class MediaWatchService : Service() {
     @Volatile
     private var health = CaptureHealth()
 
-    private val isTeyesUnit =
-        Build.MANUFACTURER.equals("sprd", ignoreCase = true) ||
-            Build.MODEL.contains("ums512", ignoreCase = true)
+    private val isTeyesUnit = DeviceProfile.isTeyes(Build.MANUFACTURER, Build.MODEL)
 
     private val app: CarMusicMeterApp get() = application as CarMusicMeterApp
 
@@ -167,6 +166,7 @@ class MediaWatchService : Service() {
         notificationAccess = probe.hasNotificationAccess()
         ListeningRepository.updateCaptureHealth(health)
         ListeningRepository.setServiceRunning(true)
+        ListeningRepository.setTeyesDevice(isTeyesUnit)
         ListeningRepository.setNotificationAccess(notificationAccess)
         ListeningRepository.setAccessibilityEnabled(AccessibilityAccess.isEnabled(this))
     }

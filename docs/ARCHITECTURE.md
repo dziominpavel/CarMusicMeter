@@ -29,7 +29,7 @@
 | `SnapshotWriter` | окружение, громкость, аудиовыходы, все сессии, уведомления, `stockPlayer`, `stockPlayerUi`, `teyes`, пакеты |
 | `AutostartScheduler` / `AutostartJobService` | persisted JobScheduler и страховка автозапуска |
 | `AutostartActivity` | невидимый пункт для списка автозапуска Teyes |
-| `ProbeScreen` | экран диагностики и кнопки |
+| `DashboardScreen` / `DiagnosticsScreen` / `SettingsScreen` | главный пульт, диагностика и настройки |
 
 ## Поток данных
 
