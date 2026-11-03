@@ -129,8 +129,33 @@ object StockPlayerBridge {
         ) {
             return false
         }
-        current = state
-        return old?.metaSignature != state.metaSignature
+        val next = reconcile(old, state)
+        current = next
+        return old?.metaSignature != next.metaSignature
+    }
+
+    /**
+     * Плеер при смене трека присылает промежуточный intent: старый title,
+     * новый play_path, play_state=false и без play_total. Это ещё не новый
+     * трек, а пауза текущего. Сохраняем поля текущего трека, чтобы
+     * track_ended не получил путь и длительность следующего.
+     */
+    private fun reconcile(old: StockPlayerState?, new: StockPlayerState): StockPlayerState {
+        if (old == null) return new
+        if (old.packageName != new.packageName || old.source != new.source) return new
+        if (TrackIdentity.normalize(old.title) != TrackIdentity.normalize(new.title)) return new
+        if (!TrackIdentity.artistsCompatible(old.artist, new.artist)) return new
+        if (old.path == null || new.path == null || old.path == new.path) return new
+        if (new.playing && new.durationMs != null) return new
+
+        return new.copy(
+            album = old.album,
+            path = old.path,
+            durationMs = old.durationMs,
+            positionMs = old.positionMs ?: new.positionMs,
+            rawTexts = old.rawTexts,
+            extras = old.extras,
+        )
     }
 
     /**
@@ -140,6 +165,7 @@ object StockPlayerBridge {
     @Synchronized
     fun touch(nowMonoMs: Long): Boolean {
         val old = current ?: return false
+        if (old.source != StockPlayerSources.ACCESSIBILITY) return false
         current = old.copy(updatedAtMonoMs = nowMonoMs)
         return true
     }

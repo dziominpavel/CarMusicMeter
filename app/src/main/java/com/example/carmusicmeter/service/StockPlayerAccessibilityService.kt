@@ -16,6 +16,7 @@ import com.example.carmusicmeter.data.AccessibilityRange
 import com.example.carmusicmeter.data.AccessibilityWindow
 import com.example.carmusicmeter.data.AccessibilityWindowSelector
 import com.example.carmusicmeter.data.CaptureGap
+import com.example.carmusicmeter.data.CaptureGapPolicy
 import com.example.carmusicmeter.data.DebounceGate
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.LogEvent
@@ -99,12 +100,24 @@ class StockPlayerAccessibilityService : AccessibilityService() {
         val selected = AccessibilityWindowSelector.select(windows)
 
         if (selected == null) {
-            if (musicActive && !gapActive) {
-                gapActive = true
-                logGap(active = true, reason = "stock_window_unavailable", windows = windows)
-            } else if (!musicActive && gapActive) {
-                gapActive = false
-                logGap(active = false, reason = "music_inactive", windows = windows)
+            val sourceActive = StockPlayerBridge.activeState(now, musicActive) != null
+            when (CaptureGapPolicy.action(musicActive, gapActive, sourceActive)) {
+                CaptureGapPolicy.Action.OPEN_WINDOW_UNAVAILABLE -> {
+                    gapActive = true
+                    logGap(active = true, reason = "stock_window_unavailable", windows = windows)
+                }
+
+                CaptureGapPolicy.Action.CLOSE_MUSIC_INACTIVE -> {
+                    gapActive = false
+                    logGap(active = false, reason = "music_inactive", windows = windows)
+                }
+
+                CaptureGapPolicy.Action.CLOSE_SOURCE_AVAILABLE -> {
+                    gapActive = false
+                    logGap(active = false, reason = "source_available", windows = windows)
+                }
+
+                null -> Unit
             }
             // Окна плеера нет: не крутим дорогой скан каждые 2 секунды.
             // Появление окна всё равно даст accessibility-событие.

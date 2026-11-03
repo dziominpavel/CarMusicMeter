@@ -2,6 +2,7 @@ package com.example.carmusicmeter.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,6 +69,50 @@ class StockPlayerParserTest {
                 "com.yf.teyesspotify",
             ),
         )
+    }
+
+    @Test
+    fun `broadcast не принимает служебное Неизвестно`() {
+        assertNull(
+            StockPlayerParser.fromBroadcast(
+                mapOf("title" to "Неизвестно", "play_state" to true),
+                now,
+                "com.syu.music",
+                source = StockPlayerSources.FYT_SERVICE,
+            ),
+        )
+    }
+
+    @Test
+    fun `broadcast очищает заглушки в исполнителе и альбоме`() {
+        val state = StockPlayerParser.fromBroadcast(
+            mapOf(
+                "title" to "Real Song",
+                "play_artist" to "Неизвестно",
+                "play_album" to "Unknown",
+                "play_state" to true,
+            ),
+            now,
+            "com.syu.music",
+            source = StockPlayerSources.FYT_SERVICE,
+        )
+
+        assertEquals("Real Song", state?.title)
+        assertNull(state?.artist)
+        assertNull(state?.album)
+    }
+
+    @Test
+    fun `accessibility не принимает служебное Неизвестно`() {
+        val result = StockPlayerParser.inspectAccessibility(
+            packageName = "com.syu.music",
+            window = window("Неизвестно", "Неизвестно"),
+            playing = true,
+            nowMs = now,
+        )
+
+        assertFalse(result.accepted)
+        assertNull(result.state)
     }
 
     @Test
@@ -155,6 +200,132 @@ class StockPlayerParserTest {
         )!!
         assertTrue(StockPlayerBridge.update(later))
         assertEquals("Other Song", StockPlayerBridge.snapshot(now + 11_000L, true)?.title)
+        StockPlayerBridge.reset()
+    }
+
+    @Test
+    fun `bridge сохраняет path и duration на переходном intent`() {
+        StockPlayerBridge.reset()
+        val first = StockPlayerParser.fromBroadcast(
+            extras = mapOf(
+                "title" to "Song A",
+                "play_artist" to "Artist",
+                "play_path" to "/music/a.flac",
+                "play_state" to true,
+                "play_total" to 200_000L,
+            ),
+            nowMs = now,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        StockPlayerBridge.update(first)
+
+        val transition = StockPlayerParser.fromBroadcast(
+            extras = mapOf(
+                "title" to "Song A",
+                "play_artist" to "Artist",
+                "play_path" to "/music/b.flac",
+                "play_state" to false,
+            ),
+            nowMs = now + 1_000L,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        assertTrue(StockPlayerBridge.update(transition))
+
+        val snapshot = StockPlayerBridge.snapshot(now + 1_000L, true)!!
+        assertEquals("/music/a.flac", snapshot.mediaId)
+        assertEquals(200_000L, snapshot.durationMs)
+        assertEquals(MediaPhase.PAUSED, snapshot.phase)
+        StockPlayerBridge.reset()
+    }
+
+    @Test
+    fun `bridge принимает новый трек после переходного intent`() {
+        StockPlayerBridge.reset()
+        val first = StockPlayerParser.fromBroadcast(
+            extras = mapOf(
+                "title" to "Song A",
+                "play_artist" to "Artist",
+                "play_path" to "/music/a.flac",
+                "play_state" to true,
+                "play_total" to 200_000L,
+            ),
+            nowMs = now,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        StockPlayerBridge.update(first)
+
+        val transition = StockPlayerParser.fromBroadcast(
+            extras = mapOf(
+                "title" to "Song A",
+                "play_artist" to "Artist",
+                "play_path" to "/music/b.flac",
+                "play_state" to false,
+            ),
+            nowMs = now + 1_000L,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        StockPlayerBridge.update(transition)
+
+        val next = StockPlayerParser.fromBroadcast(
+            extras = mapOf(
+                "title" to "Song B",
+                "play_artist" to "Artist",
+                "play_path" to "/music/b.flac",
+                "play_state" to true,
+                "play_total" to 180_000L,
+            ),
+            nowMs = now + 2_000L,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        assertTrue(StockPlayerBridge.update(next))
+
+        val snapshot = StockPlayerBridge.snapshot(now + 2_000L, true)!!
+        assertEquals("Song B", snapshot.title)
+        assertEquals("/music/b.flac", snapshot.mediaId)
+        assertEquals(180_000L, snapshot.durationMs)
+        StockPlayerBridge.reset()
+    }
+
+    @Test
+    fun `bridge touch не продлевает fyt_service`() {
+        StockPlayerBridge.reset()
+        val service = StockPlayerParser.fromBroadcast(
+            extras = mapOf(
+                "title" to "Service Song",
+                "play_artist" to "Artist",
+                "play_path" to "/music/service.flac",
+                "play_state" to true,
+                "play_total" to 200_000L,
+            ),
+            nowMs = now,
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            source = StockPlayerSources.FYT_SERVICE,
+        )!!
+        StockPlayerBridge.update(service)
+
+        assertFalse(StockPlayerBridge.touch(now + 20_000L))
+        assertNull(StockPlayerBridge.snapshot(now + 31_000L, true))
+        StockPlayerBridge.reset()
+    }
+
+    @Test
+    fun `bridge touch продлевает accessibility`() {
+        StockPlayerBridge.reset()
+        val accessibility = StockPlayerParser.fromAccessibility(
+            packageName = StockPlayerProtocol.STOCK_PACKAGE,
+            texts = listOf("Accessibility Song", "Artist"),
+            playing = true,
+            nowMs = now,
+        )!!
+        StockPlayerBridge.update(accessibility)
+
+        assertTrue(StockPlayerBridge.touch(now + 20_000L))
+        assertNotNull(StockPlayerBridge.snapshot(now + 20_000L, true))
         StockPlayerBridge.reset()
     }
 

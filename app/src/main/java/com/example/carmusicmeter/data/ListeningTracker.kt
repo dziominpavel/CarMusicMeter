@@ -31,6 +31,7 @@ class ListeningTracker {
         var playedMs: Long,
         var running: Boolean,
         var lastTickMonoMs: Long,
+        var lastTickWallMs: Long,
         var lastSeenMonoMs: Long,
         var lastPositionMs: Long?,
         var lastPositionMonoMs: Long,
@@ -185,7 +186,20 @@ class ListeningTracker {
             return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
         }
 
+        if (time.monoMs - current.lastTickMonoMs > MAX_TICK_GAP_MS) {
+            val lastTime = TickTime(current.lastTickWallMs, current.lastTickMonoMs)
+            events += endEvent(current, lastTime, next = null, explicitReason = "session_lost")
+            active = null
+            if (snapshot != null && snapshot.phase == MediaPhase.PLAYING) {
+                val next = start(time, snapshot, volume, volumeMax, source)
+                active = next
+                events += startEvent(next, time.wallMs)
+            }
+            return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
+        }
+
         accumulate(current, time.monoMs)
+        current.lastTickWallMs = time.wallMs
 
         if (snapshot == null) {
             if (time.monoMs - current.lastSeenMonoMs > SESSION_GRACE_MS) {
@@ -205,10 +219,11 @@ class ListeningTracker {
             return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
         }
 
+        val merged = preserveSameTrackFields(current.snapshot, snapshot)
         val oldPhase = current.snapshot.phase
-        val newPhase = snapshot.phase
+        val newPhase = merged.phase
         val phaseChanged = oldPhase != newPhase
-        val reported = snapshot.positionMs
+        val reported = merged.positionMs
         val expected = expectedPosition(current, time.monoMs)
         val positionReset = isPositionReset(newPhase, reported, expected)
         val repeated = !phaseChanged &&
@@ -219,8 +234,8 @@ class ListeningTracker {
             expected >= current.snapshot.durationMs!! - COMPLETE_SLACK_MS
 
         if (repeated) {
-            events += endEvent(current, time, next = snapshot, explicitReason = null)
-            val next = start(time, snapshot, volume, volumeMax, source)
+            events += endEvent(current, time, next = merged, explicitReason = null)
+            val next = start(time, merged, volume, volumeMax, source)
             active = next
             events += startEvent(next, time.wallMs)
             return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
@@ -294,7 +309,7 @@ class ListeningTracker {
         }
 
         current.running = newPhase == MediaPhase.PLAYING
-        current.snapshot = snapshot
+        current.snapshot = merged
 
         return TickResult(events, liveTrack(time.monoMs, volume, volumeMax))
     }
@@ -335,6 +350,26 @@ class ListeningTracker {
         return listOf(event)
     }
 
+    /**
+     * Тот же трек может прийти с неполными полями: плеер присылает переходный
+     * intent без duration/mediaId. Не теряем уже известные значения.
+     */
+    private fun preserveSameTrackFields(
+        old: MediaSnapshot,
+        new: MediaSnapshot,
+    ): MediaSnapshot {
+        if (new.durationMs == null) {
+            return new.copy(
+                durationMs = old.durationMs,
+                mediaId = old.mediaId ?: new.mediaId,
+            )
+        }
+        if (new.mediaId == null) {
+            return new.copy(mediaId = old.mediaId)
+        }
+        return new
+    }
+
     private fun start(
         time: TickTime,
         snapshot: MediaSnapshot,
@@ -357,6 +392,7 @@ class ListeningTracker {
             playedMs = 0L,
             running = snapshot.phase == MediaPhase.PLAYING,
             lastTickMonoMs = time.monoMs,
+            lastTickWallMs = time.wallMs,
             lastSeenMonoMs = time.monoMs,
             lastPositionMs = snapshot.positionMs,
             lastPositionMonoMs = time.monoMs,
@@ -627,6 +663,9 @@ class ListeningTracker {
     private companion object {
         /** Сколько ждём возвращения сессии, прежде чем закрыть трек. */
         const val SESSION_GRACE_MS = 5_000L
+
+        /** Разрыв между тиками, который считается сном/doze, а не задержкой. */
+        const val MAX_TICK_GAP_MS = 120_000L
 
         /** Скачок позиции больше этого считаем перемоткой. */
         const val SEEK_THRESHOLD_MS = 5_000L

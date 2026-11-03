@@ -1,6 +1,7 @@
 package com.example.carmusicmeter.data
 
 import java.io.File
+import java.util.Locale
 
 /**
  * Разбор состояния штатного плеера, у которого нет MediaSession.
@@ -41,6 +42,11 @@ object StockPlayerParser {
         "плейлисты", "все", "недавние", "недавнее",
     )
 
+    private val PLACEHOLDER_VALUES = setOf(
+        "неизвестно", "неизвестный", "неизвестная", "unknown", "unknown artist",
+        "unknown title", "без названия", "без имени", "null", "(null)", "-", "—", "–",
+    )
+
     private val HEADERS = setOf(
         "список", "список музыки", "внутренняя память", "usb", "sd", "sd-карта",
         "флешка", "накопитель", "внутренний накопитель", "избранное", "папки",
@@ -69,9 +75,9 @@ object StockPlayerParser {
             ?.takeIf(::isPlausibleTitle)
             ?: return null
         val artist = string(extras[StockPlayerProtocol.EXTRA_ARTIST])
-            ?.takeIf { it.isNotBlank() && !it.equals("unknown", true) }
+            ?.takeIf { !isPlaceholder(it) }
         val album = string(extras[StockPlayerProtocol.EXTRA_ALBUM])
-            ?.takeIf { it.isNotBlank() && !it.equals("unknown", true) }
+            ?.takeIf { !isPlaceholder(it) }
         val path = string(extras[StockPlayerProtocol.EXTRA_PATH])
             ?.takeIf { it.isNotBlank() }
         val playState = extras[StockPlayerProtocol.EXTRA_PLAYING]
@@ -198,6 +204,7 @@ object StockPlayerParser {
         return texts.asSequence()
             .mapNotNull(::normalize)
             .filter { it.length in 2..120 }
+            .filterNot(::isPlaceholder)
             .filterNot(::isControl)
             .filterNot(::isHeader)
             .filterNot(::isListRow)
@@ -259,10 +266,15 @@ object StockPlayerParser {
         confidence: String,
         titleLine: String,
     ): AccessibilityParseResult {
+        if (isPlaceholder(title)) {
+            return AccessibilityParseResult(
+                null, false, "placeholder", null, allTexts, titleLine,
+            )
+        }
         val state = StockPlayerState(
             packageName = packageName,
             title = title,
-            artist = artist,
+            artist = artist?.takeIf { !isPlaceholder(it) },
             durationMs = timing.durationMs,
             positionMs = timing.positionMs,
             playing = playing,
@@ -369,8 +381,13 @@ object StockPlayerParser {
     private fun isMediaLine(value: String): Boolean =
         MEDIA_LINE.matches(value.trim())
 
+    private fun isPlaceholder(value: String?): Boolean {
+        val normalized = normalize(value)?.lowercase(Locale.ROOT) ?: return true
+        return normalized in PLACEHOLDER_VALUES
+    }
+
     private fun isPlausibleTitle(value: String): Boolean =
-        value.isNotBlank() && !value.equals("unknown", true) && !value.contains("Unknown")
+        value.isNotBlank() && !isPlaceholder(value)
 
     private fun cleanTitle(value: String): String {
         val trimmed = value.trim()

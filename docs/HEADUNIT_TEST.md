@@ -129,7 +129,7 @@ CarMusicMeter: в карточке должен появиться источн�
 
 Цель: за одну поездку проверить фоновый источник, подрулевой и разрывы.
 
-Перед выездом: установлены оба APK, основной app добавлен в автозапуск Teyes,
+Перед выездом: установлен один APK, приложение добавлено в автозапуск Teyes,
 батарея без ограничений, accessibility включена (для проверки fallback).
 
 1. Включить музыку в **штатном** плеере, дать играть 15 секунд.
@@ -149,7 +149,10 @@ CarMusicMeter: в карточке должен появиться источн�
 - `media_button` с `keyCode=87/88/85` — нажатия подрулевого;
 - `capture_gap` с `reason=no_source`, если источник пропал;
 - `accessibility_state_changed` / `accessibility_connected` — статус fallback;
-- нет дублей `track_started` при смене источника.
+- нет дублей `track_started` при смене источника;
+- нет `track_started` с `title=Неизвестно`;
+- `track_ended.mediaId` совпадает с `track_started.mediaId` того же прослушивания;
+- нет `capture_gap`, пока `fyt_service` активен.
 
 Если `fyt_metadata_service` нет — приложение не получило intent. Проверьте,
 что установлено под `com.syu.widget.music` и старая версия
