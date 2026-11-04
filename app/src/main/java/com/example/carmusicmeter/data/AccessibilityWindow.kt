@@ -72,6 +72,52 @@ data class AccessibilityWindow(
             }
         }
     }
+
+    /**
+     * Подпись для диагностики: смысловые поля без бегущей позиции.
+     *
+     * Тикающее время и `rangeInfo.current` меняются на каждом скане, поэтому в
+     * [signature] они полезны (парсер перечитывает окно), а в журнале создавали
+     * бы событие каждые две секунды.
+     */
+    fun diagnosticsSignature(): String = buildString {
+        append(packageName)
+        append('|')
+        append(title.orEmpty())
+        nodes.forEach { node ->
+            append('|')
+            append(node.className.orEmpty())
+            append(':')
+            append(node.viewId.orEmpty())
+            append(':')
+            append(node.text.volatileFreeText())
+            append(':')
+            append(node.contentDescription.volatileFreeText())
+            node.range?.let { range ->
+                append(':')
+                append(range.min)
+                append('/')
+                append(range.max)
+            }
+        }
+    }
+}
+
+/** Текст узла целиком — время интерфейса (`mm:ss` или `hh:mm:ss`). */
+private val UI_TIME_TOKEN = Regex("""^\d{1,2}:\d{2}(:\d{2})?$""")
+
+/** Время внутри более длинной строки, например `00:30 / 03:45`. */
+private val UI_TIME_INLINE = Regex("""\d{1,2}:\d{2}(:\d{2})?""")
+
+/**
+ * Убирает из текста интерфейса бегущее время, чтобы подпись не менялась на
+ * каждом скане. Время целиком заменяется пустой строкой, время внутри строки —
+ * на `#`.
+ */
+internal fun String?.volatileFreeText(): String {
+    val value = this ?: return ""
+    if (UI_TIME_TOKEN.matches(value)) return ""
+    return value.replace(UI_TIME_INLINE, "#")
 }
 
 object AccessibilityWindowSelector {
@@ -111,15 +157,23 @@ class DebounceGate(private val delayMs: Long = 800L) {
     }
 }
 
-/** Ограничивает запись диагностики UI: не чаще [minIntervalMs] и только при смене. */
-class UiLogThrottle(private val minIntervalMs: Long = 2_000L) {
+/**
+ * Ограничивает запись диагностики UI: не чаще [minIntervalMs] и только при смене.
+ * Неизменная подпись всё равно переписывается раз в [anchorIntervalMs], чтобы в
+ * журнале было видно, что окно плеера оставалось доступным.
+ */
+class UiLogThrottle(
+    private val minIntervalMs: Long = 2_000L,
+    private val anchorIntervalMs: Long = 5 * 60_000L,
+) {
 
     private var lastSignature: String? = null
     private var lastAtMonoMs: Long = 0L
 
     fun shouldLog(signature: String, nowMonoMs: Long): Boolean {
-        if (signature == lastSignature) return false
-        if (lastSignature != null && nowMonoMs - lastAtMonoMs < minIntervalMs) {
+        val sameSignature = signature == lastSignature
+        if (sameSignature && nowMonoMs - lastAtMonoMs < anchorIntervalMs) return false
+        if (!sameSignature && lastSignature != null && nowMonoMs - lastAtMonoMs < minIntervalMs) {
             return false
         }
         lastSignature = signature

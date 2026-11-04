@@ -28,6 +28,21 @@ data class StockPlayerState(
             playing,
         ).joinToString("|")
 
+    /**
+     * Подпись текста для `stock_player_text`: только то, что видит пользователь.
+     * Позиция, длительность и тикающее время не входят, иначе событие писалась бы
+     * на каждом обновлении плеера.
+     */
+    val textSignature: String
+        get() = listOf(
+            packageName,
+            source,
+            title,
+            artist.orEmpty(),
+            album.orEmpty(),
+            rawTexts.joinToString("¦") { it.volatileFreeText() },
+        ).joinToString("|")
+
     fun toSnapshot(nowMonoMs: Long, isMusicActive: Boolean): MediaSnapshot? {
         val effectivePlaying = when {
             source == StockPlayerSources.ACCESSIBILITY -> playing || isMusicActive

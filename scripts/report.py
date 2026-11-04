@@ -188,8 +188,71 @@ def load_exports(paths: list[str], verify: bool):
             key = json.dumps(event, sort_keys=True, ensure_ascii=False)
             events.setdefault(key, event)
 
-    ordered = sorted(events.values(), key=lambda item: item.get("ts", 0))
+    ordered = order_events(list(events.values()))
     return ordered, malformed, sources, manifests, problems
+
+
+# ---------- порядок и поправка часов ----------
+
+
+def clock_jumps(events: list[dict]) -> dict[str, list[tuple[int, int]]]:
+    """Скачки часов по процессам: ``bootId`` -> [(monoMs, wallDelta)]."""
+    jumps: dict[str, list[tuple[int, int]]] = {}
+    for event in events:
+        if event.get("type") != "clock_changed":
+            continue
+        boot = event.get("bootId")
+        mono = event.get("monoMs")
+        delta = event.get("wallDelta")
+        if boot is None or mono is None or not isinstance(delta, (int, float)):
+            continue
+        jumps.setdefault(boot, []).append((int(mono), int(delta)))
+    return jumps
+
+
+def corrected_ts(event: dict, jumps: dict[str, list[tuple[int, int]]]) -> int:
+    """Время события с поправкой на скачки часов того же процесса.
+
+    Событие до скачка записано по старым часам; сдвиг на величину скачка ставит
+    его на реальное место. Старые ZIP без ``bootId``/``monoMs`` считаются по ``ts``.
+    """
+    ts = int(event.get("ts") or 0)
+    boot = event.get("bootId")
+    mono = event.get("monoMs")
+    if boot is None or mono is None:
+        return ts
+    shift = sum(delta for jump_mono, delta in jumps.get(boot, ()) if jump_mono > mono)
+    return int(ts + shift)
+
+
+def order_events(events: list[dict]) -> list[dict]:
+    """Упорядочивает события и правит даты, испорченные сбитыми часами.
+
+    Внутри одного процесса порядок задаёт ``monoMs`` (он не зависит от часов),
+    между процессами — исправленное время первого события. Старые ZIP без
+    конверта остаются упорядоченными по ``ts``.
+    """
+    jumps = clock_jumps(events)
+    for event in events:
+        raw = int(event.get("ts") or 0)
+        fixed = corrected_ts(event, jumps)
+        if fixed != raw:
+            event["_rawTs"] = raw
+            event["ts"] = fixed
+
+    blocks: list[tuple[int, list[dict]]] = []
+    by_boot: dict[str, list[dict]] = {}
+    for event in events:
+        boot = event.get("bootId")
+        if boot is not None and event.get("monoMs") is not None:
+            by_boot.setdefault(boot, []).append(event)
+        else:
+            blocks.append((int(event.get("ts") or 0), [event]))
+    for boot_events in by_boot.values():
+        boot_events.sort(key=lambda item: int(item.get("monoMs") or 0))
+        blocks.append((int(boot_events[0].get("ts") or 0), boot_events))
+    blocks.sort(key=lambda block: block[0])
+    return [event for _, block in blocks for event in block]
 
 
 # ---------- анализ ----------
@@ -255,6 +318,22 @@ def group_key(event: dict) -> str | None:
     if package and title:
         return f"{package}::{normalize_text(title)}::{normalize_text(event.get('artist'))}"
     return str(key) if key else None
+
+
+def mcu_volume(event: dict, field: str):
+    """Значение из ``volumeStats.mcu``: дельта громкости считается только по MCU.
+
+    Верхнеуровневые ``volumeStart``/``volumeEnd`` отражают последний сегмент
+    источника, поэтому при переключении на ``audio`` они дают фиктивные 25/25.
+    """
+    stats = event.get("volumeStats")
+    if not isinstance(stats, dict):
+        return None
+    mcu = stats.get("mcu")
+    if not isinstance(mcu, dict):
+        return None
+    value = mcu.get(field)
+    return value if isinstance(value, (int, float)) else None
 
 
 def analyze(events: list[dict], session_gap_ms: int):
@@ -361,6 +440,8 @@ def analyze(events: list[dict], session_gap_ms: int):
                 "source": event.get("source") or start.get("source") or "media_session",
                 "vol_start": event.get("volumeStart", start.get("volume")),
                 "vol_end": event.get("volumeEnd", last_volume),
+                "mcu_start": mcu_volume(event, "start"),
+                "mcu_end": mcu_volume(event, "end"),
                 "session": start.get("session", event["_session"]),
             })
 
@@ -423,6 +504,8 @@ def analyze(events: list[dict], session_gap_ms: int):
         skip_points = []
         volume_deltas = []
         volume_vs_trip = []
+        volume_known = 0
+        volume_unknown = 0
         if open_play and open_play.get("duration") and open_play["played"]:
             listened_values.append(min(open_play["played"] / open_play["duration"], 1.0))
         for play in closed:
@@ -439,11 +522,16 @@ def analyze(events: list[dict], session_gap_ms: int):
                     if point is None:
                         point = play["played"]
                     skip_points.append(min(max(point / duration, 0.0), 1.0))
-            if play.get("vol_start") is not None and play.get("vol_end") is not None:
-                volume_deltas.append(play["vol_end"] - play["vol_start"])
+            mcu_start = play.get("mcu_start")
+            mcu_end = play.get("mcu_end")
+            if mcu_start is not None and mcu_end is not None:
+                volume_deltas.append(mcu_end - mcu_start)
+                volume_known += 1
                 median = medians[play.get("session", 0)] if medians else None
                 if median is not None:
-                    volume_vs_trip.append(play["vol_end"] - median)
+                    volume_vs_trip.append(mcu_end - median)
+            else:
+                volume_unknown += 1
 
         skipped = sum(1 for play in closed if play["reason"] == "skipped")
         completed = sum(1 for play in closed if play["reason"] == "completed")
@@ -496,6 +584,8 @@ def analyze(events: list[dict], session_gap_ms: int):
             "avg_skip_pct": statistics.mean(skip_points) if skip_points else None,
             "volume_delta": statistics.mean(volume_deltas) if volume_deltas else None,
             "volume_vs_trip": statistics.mean(volume_vs_trip) if volume_vs_trip else None,
+            "volume_known": volume_known,
+            "volume_unknown": volume_unknown,
             "volume_changes": track["vol_changes"],
             "volume_up": track["vol_up"],
             "volume_down": track["vol_down"],
@@ -637,7 +727,7 @@ def render_table(metrics: list[dict], limit: int) -> str:
 def render_report(
     metrics, sessions, manifests, sources, event_count,
     malformed, problems, position_resets, args,
-    source_stats=None, gap_stats=None, media_stats=None,
+    source_stats=None, gap_stats=None, media_stats=None, clock_stats=None,
 ):
     total_played = sum(track["played_ms"] or 0 for track in metrics)
     closed = sum(track["closed_plays"] for track in metrics)
@@ -657,6 +747,9 @@ def render_report(
     }
     censored = sum(track["censored_ms"] for track in metrics)
     opens = sum(1 for track in metrics if track["open"])
+    volume_known = sum(track["volume_known"] for track in metrics)
+    volume_unknown = sum(track["volume_unknown"] for track in metrics)
+    clock_stats = clock_stats or {"jumps": 0, "corrected": 0}
     first_ts = sessions[0]["start"] if sessions else None
     last_ts = sessions[-1]["end"] if sessions else None
     devices = sorted({(m.get("deviceId") or "?") for m in manifests if m})
@@ -684,6 +777,17 @@ def render_report(
         lines.append(f"Битых строк: {malformed}")
     if position_resets:
         lines.append(f"Подозрительных позиций (сброс в ноль): {position_resets} — учтены через playedMs")
+    if clock_stats.get("jumps"):
+        corrected = clock_stats.get("corrected") or 0
+        suffix = f" · событий с поправкой: {corrected}" if corrected else ""
+        lines.append(f"Скачки часов магнитолы: {clock_stats['jumps']}{suffix}")
+    volume_total = volume_known + volume_unknown
+    if volume_total:
+        share = 100 * volume_known / volume_total
+        lines.append(
+            f"Громкость MCU: известна у {volume_known} из {volume_total} закрытых ({share:.0f}%)"
+            f" · без MCU-сегмента: {volume_unknown}"
+        )
 
     lines.append("")
     if first_ts and last_ts:
@@ -759,6 +863,10 @@ def main() -> int:
     source_stats = source_summary(events)
     gap_stats = capture_gap_summary(events)
     media_stats = media_button_summary(events)
+    clock_stats = {
+        "jumps": sum(1 for event in events if event.get("type") == "clock_changed"),
+        "corrected": sum(1 for event in events if "_rawTs" in event),
+    }
 
     if args.csv:
         fields = [
@@ -767,8 +875,8 @@ def main() -> int:
             "not_played", "stopped", "unknown", "played_ms", "raw_played_ms", "censored_ms",
             "duration_ms", "completion", "listened", "skip_rate",
             "early_skip_rate", "early_skips", "avg_skip_pct", "volume_delta", "volume_vs_trip",
-            "volume_changes", "volume_up", "volume_down", "seek_back", "seek_fwd", "days",
-            "last_played",
+            "volume_known", "volume_unknown", "volume_changes", "volume_up", "volume_down",
+            "seek_back", "seek_fwd", "days", "last_played",
         ]
         with open(args.csv, "w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
@@ -806,6 +914,10 @@ def main() -> int:
             "capture_gaps": gap_stats["count"],
             "censored_ms": sum(track["censored_ms"] for track in metrics),
             "media_buttons": media_stats["total"],
+            "volume_known": sum(track["volume_known"] for track in metrics),
+            "volume_unknown": sum(track["volume_unknown"] for track in metrics),
+            "clock_jumps": clock_stats["jumps"],
+            "clock_corrected": clock_stats["corrected"],
         },
         "source_stats": source_stats,
         "capture_gaps": gap_stats,
@@ -822,6 +934,7 @@ def main() -> int:
         print(render_report(
             metrics, sessions, manifests, sources, len(events), malformed,
             problems, position_resets, args, source_stats, gap_stats, media_stats,
+            clock_stats,
         ))
 
     if problems and args.strict:

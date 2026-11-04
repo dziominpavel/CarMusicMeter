@@ -48,6 +48,24 @@ class Prefs(context: Context) {
     )
 
     /**
+     * Прослушивание, открытое на момент последней контрольной точки.
+     *
+     * Пишется синхронно (`commit`), потому что читается после выключения
+     * питания: следующая служба должна закрыть его одним `track_ended`.
+     */
+    var openPlay: OpenPlay?
+        get() = OpenPlay.fromJson(prefs.getString(KEY_OPEN_PLAY, null))
+        set(value) {
+            prefs.edit(commit = true) {
+                if (value == null) {
+                    remove(KEY_OPEN_PLAY)
+                } else {
+                    putString(KEY_OPEN_PLAY, value.toJson())
+                }
+            }
+        }
+
+    /**
      * Идентификатор устройства для `manifest.json`. Создаётся один раз;
      * сбрасывается только при очистке данных приложения.
      */
@@ -73,5 +91,6 @@ class Prefs(context: Context) {
         const val KEY_MAX_BYTES = "max_bytes"
         const val KEY_EXPORT_RANGE = "export_range"
         const val KEY_MCU_MAX_VOLUME = "mcu_max_volume"
+        const val KEY_OPEN_PLAY = "open_play"
     }
 }

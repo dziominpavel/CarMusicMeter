@@ -283,6 +283,110 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(1, gaps["count"])
         self.assertEqual(BASE + 70_000, gaps["last_ts"])
 
+    def test_volume_delta_uses_mcu_segment(self) -> None:
+        key = "com.syu.music::song::artist"
+        ended = end(BASE + 60_000, key, 60_000, 60_000, reason="skipped")
+        # Верхнеуровневые поля — последний сегмент (переключились на audio),
+        # реальный подъём громкости виден только в сегменте MCU.
+        ended["volumeStart"] = 25
+        ended["volumeEnd"] = 25
+        ended["volumeStats"] = {
+            "audio": {"start": 25, "low": 25, "high": 25, "end": 25, "max": 25, "changes": 0},
+            "mcu": {"start": 4, "low": 4, "high": 14, "end": 14, "max": 43, "changes": 9},
+        }
+        events = [start(BASE, key, source="fyt_service"), ended]
+
+        metrics, _, _, _ = report.analyze(events, 10 * 60 * 1000)
+        track = metrics[0]
+
+        self.assertEqual(10, track["volume_delta"])
+        self.assertEqual(1, track["volume_known"])
+        self.assertEqual(0, track["volume_unknown"])
+
+    def test_volume_delta_unknown_without_mcu(self) -> None:
+        key = "com.syu.music::song::artist"
+        events = [
+            start(BASE, key, source="fyt_service"),
+            end(BASE + 60_000, key, 60_000, 60_000, source="fyt_service"),
+        ]
+
+        metrics, _, _, _ = report.analyze(events, 10 * 60 * 1000)
+        track = metrics[0]
+
+        self.assertIsNone(track["volume_delta"])
+        self.assertEqual(0, track["volume_known"])
+        self.assertEqual(1, track["volume_unknown"])
+
+    def test_clock_jump_restores_real_date_and_order(self) -> None:
+        boot = "abcd1234"
+        old = 1_683_706_000_000
+        new = 1_793_800_000_000
+        delta = new - old
+        key = "com.syu.music::song::artist"
+        events = [
+            {
+                "ts": old,
+                "type": "track_started",
+                "bootId": boot,
+                "monoMs": 100,
+                "trackKey": key,
+                "package": "com.syu.music",
+                "title": "Song",
+                "artist": "Artist",
+                "durationMs": 180_000,
+            },
+            {
+                "ts": old + 60_000,
+                "type": "track_ended",
+                "bootId": boot,
+                "monoMs": 60_100,
+                "trackKey": key,
+                "package": "com.syu.music",
+                "title": "Song",
+                "artist": "Artist",
+                "durationMs": 180_000,
+                "playedMs": 60_000,
+                "rawPlayedMs": 60_000,
+                "endPositionMs": 60_000,
+                "endReason": "skipped",
+            },
+            {
+                "ts": new,
+                "type": "clock_changed",
+                "bootId": boot,
+                "monoMs": 120_000,
+                "wallDelta": delta,
+                "monoDelta": 505,
+                "driftMs": delta,
+            },
+        ]
+
+        ordered = report.order_events(events)
+
+        self.assertEqual(
+            ["track_started", "track_ended", "clock_changed"],
+            [event["type"] for event in ordered],
+        )
+        self.assertEqual(new, ordered[0]["ts"])
+        self.assertEqual(old, ordered[0]["_rawTs"])
+        self.assertEqual(new, ordered[2]["ts"])
+        self.assertNotIn("_rawTs", ordered[2])
+
+        metrics, _, _, _ = report.analyze(ordered, 10 * 60 * 1000)
+        self.assertEqual(1, len(metrics))
+        self.assertEqual(new, metrics[0]["last_played"])
+        self.assertEqual(1, metrics[0]["closed_plays"])
+
+    def test_old_zip_without_envelope_keeps_ts(self) -> None:
+        key = "com.example.player::song::artist"
+        events = [start(BASE, key), end(BASE + 60_000, key, 60_000, 60_000)]
+
+        ordered = report.order_events(events)
+
+        self.assertEqual(BASE, ordered[0]["ts"])
+        self.assertEqual(BASE + 60_000, ordered[1]["ts"])
+        self.assertNotIn("_rawTs", ordered[0])
+
 
 if __name__ == "__main__":
     unittest.main()

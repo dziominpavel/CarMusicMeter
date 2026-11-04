@@ -351,6 +351,102 @@ class ListeningTracker {
     }
 
     /**
+     * Снимок открытого прослушивания для сохранения между запусками.
+     *
+     * Возвращает `null`, если трек не активен: сохранять тогда нечего.
+     */
+    fun openPlay(bootId: String, time: TickTime): OpenPlay? {
+        val current = active ?: return null
+        return OpenPlay(
+            bootId = bootId,
+            trackKey = current.key,
+            packageName = current.snapshot.packageName,
+            source = current.snapshot.source,
+            title = current.snapshot.title,
+            artist = current.snapshot.artist,
+            album = current.snapshot.album,
+            mediaId = current.snapshot.mediaId,
+            durationMs = current.snapshot.durationMs,
+            positionMs = extrapolatePosition(current, time.monoMs),
+            playedMs = current.playedMs,
+            startedAtWallMs = current.startedAtWallMs,
+            lastTsWallMs = current.lastTickWallMs,
+            volumeStart = current.volumeStart,
+            volumeLow = current.volumeLow,
+            volumeHigh = current.volumeHigh,
+            volumeEnd = lastVolume ?: current.volumeStart,
+            volumeMax = current.volumeMax,
+            volumeChanges = current.volumeChanges,
+            volumeSource = lastVolumeSource ?: "audio",
+            volumeStats = current.volumeStats.mapValues { (_, segment) ->
+                OpenPlayVolume(
+                    start = segment.start,
+                    low = segment.low,
+                    high = segment.high,
+                    end = segment.end,
+                    max = segment.max,
+                    changes = segment.changes,
+                )
+            },
+        )
+    }
+
+    /**
+     * Закрывает прослушивание, оставшееся от предыдущего процесса.
+     *
+     * Событие строится по сохранённым полям, поэтому не теряет длительность,
+     * путь и статистику громкости. `playedMs` берётся из контрольной точки —
+     * время, пока приложение не работало, не досчитывается.
+     */
+    fun closeRestored(open: OpenPlay, time: TickTime): LogEvent {
+        val snapshot = MediaSnapshot(
+            packageName = open.packageName,
+            sessionTag = "stock",
+            title = open.title,
+            artist = open.artist,
+            album = open.album,
+            durationMs = open.durationMs,
+            positionMs = open.positionMs,
+            phase = MediaPhase.PLAYING,
+            mediaId = open.mediaId,
+            source = open.source,
+        )
+        val restored = Active(
+            key = open.trackKey,
+            snapshot = snapshot,
+            startedAtWallMs = open.startedAtWallMs,
+            playedMs = open.playedMs,
+            running = false,
+            lastTickMonoMs = time.monoMs,
+            lastTickWallMs = open.lastTsWallMs,
+            lastSeenMonoMs = time.monoMs,
+            lastPositionMs = open.positionMs,
+            lastPositionMonoMs = time.monoMs,
+            volumeStart = open.volumeStart,
+            volumeLow = open.volumeLow,
+            volumeHigh = open.volumeHigh,
+            volumeChanges = open.volumeChanges,
+            volumeMax = open.volumeMax,
+            volumeStats = open.volumeStats.mapValuesTo(mutableMapOf()) { (_, value) ->
+                VolumeSegment(
+                    start = value.start,
+                    low = value.low,
+                    high = value.high,
+                    end = value.end,
+                    max = value.max,
+                    changes = value.changes,
+                )
+            },
+            lastCheckpointMonoMs = time.monoMs,
+            lastCheckpointPhase = MediaPhase.PLAYING,
+        )
+        lastVolume = open.volumeEnd
+        lastVolumeMax = open.volumeMax
+        lastVolumeSource = open.volumeSource
+        return endEvent(restored, time, next = null, explicitReason = "session_lost")
+    }
+
+    /**
      * Тот же трек может прийти с неполными полями: плеер присылает переходный
      * intent без duration/mediaId. Не теряем уже известные значения.
      */

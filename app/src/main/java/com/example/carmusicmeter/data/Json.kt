@@ -6,8 +6,17 @@ import org.json.JSONObject
 /** Преобразование Kotlin-значений в JSON без сторонних библиотек. */
 object Json {
 
-    fun eventToJson(event: LogEvent): String =
-        objectFrom(event.fields, ts = event.ts, type = event.type).toString()
+    fun eventToJson(
+        event: LogEvent,
+        bootId: String? = null,
+        monoMs: Long? = null,
+    ): String = JSONObject().apply {
+        put("ts", event.ts)
+        put("type", event.type)
+        if (bootId != null) put("bootId", bootId)
+        if (monoMs != null) put("monoMs", monoMs)
+        event.fields.forEach { (key, value) -> put(key, toJsonValue(value)) }
+    }.toString()
 
     fun objectFrom(
         fields: Map<String, Any?>,

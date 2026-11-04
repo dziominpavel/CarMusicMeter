@@ -160,7 +160,13 @@ class TeyesToolkitClient(private val context: Context) {
 
     fun status(): Status = status
 
-    /** Периодически перечитывает значения, если callback вендора молчит. */
+    /**
+     * Периодически перечитывает значения, если callback вендора молчит.
+     *
+     * `null` от синхронного чтения — норма для этого сервиса: Teyes обновляет
+     * значение колбэком, а не по запросу. Поэтому неудачное чтение не делает
+     * последнее известное значение недействительным.
+     */
     fun refresh() {
         val soundModule = module ?: return
         if (!soundModule.isBinderAlive) {
@@ -190,32 +196,15 @@ class TeyesToolkitClient(private val context: Context) {
         }
     }
 
-    /** Свежее значение для выбора громкости; null — используем AudioManager. */
-    fun reading(nowMs: Long = System.currentTimeMillis()): McuVolume {
-        val current = status
-        if (!current.module || current.volume == null) {
-            return McuVolume(
-                volume = null,
-                muted = current.muted,
-                updatedAtMs = current.updatedAtMs,
-                reason = if (!current.module) "mcu_unavailable" else "mcu_error",
-            )
-        }
-        if (current.updatedAtMs > 0 && nowMs - current.updatedAtMs > STALE_MS) {
-            return McuVolume(
-                volume = null,
-                muted = current.muted,
-                updatedAtMs = current.updatedAtMs,
-                reason = "mcu_stale",
-            )
-        }
-        return McuVolume(
-            volume = current.volume,
-            muted = current.muted,
-            updatedAtMs = current.updatedAtMs,
-            reason = "mcu_available",
-        )
-    }
+    /**
+     * Свежее значение для выбора громкости; `volume = null` — используем
+     * `AudioManager`.
+     *
+     * Значение считается действительным, пока сервис подключён: громкость
+     * панели не меняется сама, а каждое изменение приходит колбэком вендора.
+     * Давность последнего обновления не повод подставлять чужую шкалу.
+     */
+    fun reading(): McuVolume = status.toMcuVolume()
 
     private fun bind() {
         if (!started || binding || bound || module != null) return
@@ -391,6 +380,28 @@ class TeyesToolkitClient(private val context: Context) {
         const val U_MUTE = 3
 
         const val RETRY_MS = 15_000L
-        const val STALE_MS = 60_000L
     }
+}
+
+/**
+ * Переводит состояние toolkit в значение для выбора громкости.
+ *
+ * Чистая функция: [TeyesToolkitClient.Status] уже содержит всё нужное, поэтому
+ * решение «MCU или резервный источник» проверяется тестом без Android.
+ */
+internal fun TeyesToolkitClient.Status.toMcuVolume(): McuVolume {
+    if (!module || volume == null) {
+        return McuVolume(
+            volume = null,
+            muted = muted,
+            updatedAtMs = updatedAtMs,
+            reason = if (!module) "mcu_unavailable" else "mcu_error",
+        )
+    }
+    return McuVolume(
+        volume = volume,
+        muted = muted,
+        updatedAtMs = updatedAtMs,
+        reason = "mcu_available",
+    )
 }

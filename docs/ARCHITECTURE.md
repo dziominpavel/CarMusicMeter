@@ -74,7 +74,14 @@ AudioManager ──────────────────────�
 ## События
 
 Все события — строки JSONL в `files/logs/events-YYYY-MM-DD.jsonl`.
-Общие поля: `ts` (epoch ms), `type`.
+Общие поля: `ts` (epoch ms), `type`, `bootId`, `monoMs`.
+
+`bootId` — короткий идентификатор процесса, `monoMs` — `elapsedRealtime()` на
+момент записи пачки. Оба ставит `EventLog`, а не построители событий. Конверт
+нужен, чтобы отчёт мог упорядочить события и поправить даты, если часы
+магнитолы сбились: поправка выводится из событий `clock_changed`
+(`wallDelta` + `monoMs`) того же `bootId`, отдельного поля не требуется.
+Старые ZIP без конверта отчёт читает по `ts`, как раньше.
 
 | Тип | Когда | Ключевые поля |
 |---|---|---|
@@ -90,8 +97,8 @@ AudioManager ──────────────────────�
 | `volume_source_changed` | сменился источник громкости | `from`, `to`, `fromValue`, `toValue`, `fromMax`, `toMax`, `sourceReason`, `trackKey` |
 | `mute_changed` | включили/выключили mute | `muted`, `volume`, `volumeMax`, `source`, `sourceReason`, `trackKey` |
 | `notification` | уведомление | `package`, `title`, `text`, `bigText`, `actions`, `hasMediaSession`, `mediaLike`, `extras`, `remoteTexts` |
-| `stock_player_text` | изменился текст штатного плеера | `package`, `title`, `artist`, `source`, `playing`, `rawTexts` |
-| `stock_player_ui` | изменилась структура окна плеера | `package`, `allTexts`, `nodes`, `windows`, `accepted`, `rejectReason`, `confidence`, `rangeInfo` |
+| `stock_player_text` | изменились название, исполнитель, альбом или набор сырых строк (позиция не считается) | `package`, `title`, `artist`, `source`, `playing`, `rawTexts` |
+| `stock_player_ui` | изменилась структура окна плеера (тикающая позиция и `rangeInfo.current` не считаются); дополнительно раз в 5 минут | `package`, `allTexts`, `nodes`, `windows`, `accepted`, `rejectReason`, `confidence`, `rangeInfo` |
 | `capture_gap` | окно плеера пропало или вернулось | `active`, `reason`, `lastTitle`, `lastSource`, `isMusicActive`, `windows` |
 | `teyes_toolkit` | изменилось состояние MCU-сервиса | `available`, `connected`, `module`, `error` |
 | `service_started` | служба запущена | `source` (`manual`, `boot`, `job`, `media_mounted`, `app_open`, `teyes_autostart`, `accessibility`, `notification`, `system_restart`) |
@@ -110,6 +117,15 @@ AudioManager ──────────────────────�
 - `not_played` — трек был активен меньше 3 секунд и не дослушан;
 - `session_lost` — сессия или окно исчезли дольше чем на 5 с;
 - `service_stopped` — службу остановили.
+
+### Подписи диагностики
+
+`stock_player_ui` и `stock_player_text` сравниваются по смысловым подписям.
+В подписи окна нет строк времени и `rangeInfo.current`, в подписи текста — нет
+позиции и тикающего времени. Без этого событие писалась бы на каждом опросе
+видимого окна: в реальной выгрузке 2026-11-04 это дало 271 событие и 92%
+объёма журнала за 17 минут поездки. Парсер по-прежнему работает по полной
+подписи `AccessibilityWindow.signature()` с позицией: ему нужен каждый тик.
 
 ## Идентичность трека
 

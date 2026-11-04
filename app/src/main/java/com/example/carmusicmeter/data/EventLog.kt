@@ -2,6 +2,7 @@ package com.example.carmusicmeter.data
 
 import android.content.ContentResolver
 import android.net.Uri
+import android.os.SystemClock
 import org.json.JSONObject
 import java.io.BufferedOutputStream
 import java.io.File
@@ -11,6 +12,7 @@ import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -20,8 +22,20 @@ import java.util.zip.ZipOutputStream
  * Каждая пачка событий пишется с fsync: магнитола выключается вместе с
  * зажиганием, и буфер в памяти потерялся бы. События редкие (смена трека,
  * пауза, громкость), поэтому цена fsync незаметна.
+ *
+ * Каждое событие получает конверт `bootId` + `monoMs`: по ним отчёт может
+ * упорядочить события и восстановить даты, если часы магнитолы сбились.
  */
-class EventLog(baseDir: File) {
+class EventLog(
+    baseDir: File,
+    /** Идентификатор процесса: новый при каждом старте процесса. */
+    val bootId: String = newBootId(),
+    /**
+     * Монотонные миллисекунды на момент записи пачки. Вынесены параметром,
+     * чтобы JVM-тесты не зависели от Android-часов.
+     */
+    private val monoClock: () -> Long = { SystemClock.elapsedRealtime() },
+) {
 
     val logsDir = File(baseDir, "logs").apply { mkdirs() }
     val snapshotsDir = File(baseDir, "snapshots").apply { mkdirs() }
@@ -34,10 +48,12 @@ class EventLog(baseDir: File) {
     fun appendAll(events: List<LogEvent>) {
         if (events.isEmpty()) return
         val file = todayFile(events.last().ts)
+        val monoMs = monoClock()
         synchronized(this) {
             FileOutputStream(file, true).use { out ->
                 events.forEach { event ->
-                    out.write((Json.eventToJson(event) + "\n").toByteArray(Charsets.UTF_8))
+                    val line = Json.eventToJson(event, bootId = bootId, monoMs = monoMs)
+                    out.write((line + "\n").toByteArray(Charsets.UTF_8))
                 }
                 out.flush()
                 out.fd.sync()
@@ -234,3 +250,11 @@ class EventLog(baseDir: File) {
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 }
+
+/**
+ * Короткий идентификатор процесса для конверта событий.
+ *
+ * Достаточно уникальности в пределах устройства: отчёт использует его, чтобы
+ * понять, какие события принадлежат одному запуску службы.
+ */
+fun newBootId(): String = UUID.randomUUID().toString().replace("-", "").take(8)

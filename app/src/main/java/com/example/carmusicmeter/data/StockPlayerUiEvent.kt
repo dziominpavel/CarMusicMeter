@@ -1,5 +1,30 @@
 package com.example.carmusicmeter.data
 
+/**
+ * Подпись диагностики UI для throttle: смысловые поля окна и решение парсера.
+ *
+ * Бегущая позиция и тикающее время в неё не входят — иначе событие писалась бы
+ * на каждом скане видимого окна.
+ */
+fun uiDiagnosticsSignature(
+    window: AccessibilityWindow,
+    result: StockPlayerParser.AccessibilityParseResult,
+): String = buildString {
+    append(window.diagnosticsSignature())
+    append('|')
+    append(result.accepted)
+    append('|')
+    append(result.rejectReason.orEmpty())
+    append('|')
+    append(result.confidence.orEmpty())
+    append('|')
+    append(result.state?.title.orEmpty())
+    append('|')
+    append(result.state?.artist.orEmpty())
+    append('|')
+    append(result.state?.durationMs ?: -1L)
+}
+
 /** Поля события `stock_player_ui`: структура окна и решение парсера. */
 data class StockPlayerUiEvent(
     val window: AccessibilityWindow,

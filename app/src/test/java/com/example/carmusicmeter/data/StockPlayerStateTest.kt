@@ -3,6 +3,7 @@ package com.example.carmusicmeter.data
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StockPlayerStateTest {
@@ -119,5 +120,43 @@ class StockPlayerStateTest {
 
         assertNull(value.toSnapshot(90_001L, isMusicActive = true))
         assertNotNull(value.toSnapshot(89_999L, isMusicActive = true))
+    }
+
+    private fun textState(
+        album: String = "Simply the Best",
+        positionMs: Long = 30_000L,
+        rawTexts: List<String> = listOf("The Best", "Tina Turner", "00:00:30", "00:03:45"),
+    ) = StockPlayerState(
+        packageName = "com.syu.music",
+        title = "The Best",
+        artist = "Tina Turner",
+        album = album,
+        positionMs = positionMs,
+        source = StockPlayerSources.FYT_SERVICE,
+        updatedAtMs = 1_000L,
+        rawTexts = rawTexts,
+    )
+
+    @Test
+    fun `подпись текста не зависит от позиции и тикающего времени`() {
+        val first = textState()
+        val second = textState(
+            positionMs = 35_000L,
+            rawTexts = listOf("The Best", "Tina Turner", "00:00:35", "00:03:45"),
+        )
+
+        assertEquals(first.textSignature, second.textSignature)
+    }
+
+    @Test
+    fun `подпись текста меняется при смене альбома`() {
+        assertTrue(textState().textSignature != textState(album = "Other").textSignature)
+    }
+
+    @Test
+    fun `подпись текста меняется при появлении новой строки`() {
+        val other = textState(rawTexts = listOf("The Best", "Tina Turner", "Simply the Best"))
+
+        assertTrue(textState().textSignature != other.textSignature)
     }
 }

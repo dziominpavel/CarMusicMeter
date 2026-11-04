@@ -26,6 +26,7 @@ import com.example.carmusicmeter.data.StockPlayerProtocol
 import com.example.carmusicmeter.data.StockPlayerUiEvent
 import com.example.carmusicmeter.data.StockPlayerUiStore
 import com.example.carmusicmeter.data.UiLogThrottle
+import com.example.carmusicmeter.data.uiDiagnosticsSignature
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -164,7 +165,7 @@ class StockPlayerAccessibilityService : AccessibilityService() {
             durationMs = result.state?.durationMs,
             positionMs = result.state?.positionMs,
         )
-        if (uiThrottle.shouldLog(signature, now)) {
+        if (uiThrottle.shouldLog(uiDiagnosticsSignature(selected, result), now)) {
             logUi(selected, windows, result, nowWall)
         }
         if (result.accepted && result.state != null) {

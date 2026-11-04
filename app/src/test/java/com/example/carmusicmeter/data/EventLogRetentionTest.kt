@@ -14,7 +14,7 @@ class EventLogRetentionTest {
     private val root: File = Files.createTempDirectory("cmm-retention").toFile()
     private val today = LocalDate.of(2026, 3, 1)
     private val now = StorageDates.startOfDayMs(today) + 12L * 60L * 60L * 1000L
-    private val log = EventLog(root).apply {
+    private val log = EventLog(root, monoClock = { 0L }).apply {
         logsDir.mkdirs()
         snapshotsDir.mkdirs()
     }

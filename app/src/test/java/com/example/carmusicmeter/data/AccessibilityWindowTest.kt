@@ -136,4 +136,66 @@ class AccessibilityWindowTest {
         assertTrue(stableResult.accepted)
         assertEquals("The Best", stableResult.state?.title)
     }
+
+    private fun playerWindow(position: String, rangeCurrent: Float, title: String = "The Best") =
+        AccessibilityWindow(
+            packageName = "com.syu.music",
+            title = "Музыка",
+            nodes = listOf(
+                AccessibilityNode(className = "android.widget.TextView", text = title),
+                AccessibilityNode(className = "android.widget.TextView", text = "Tina Turner"),
+                AccessibilityNode(className = "android.widget.TextView", text = position),
+                AccessibilityNode(
+                    className = "android.widget.SeekBar",
+                    viewId = "com.syu.music:id/progress",
+                    range = AccessibilityRange(0f, 180_000f, rangeCurrent),
+                ),
+            ),
+        )
+
+    @Test
+    fun `диагностическая подпись не зависит от бегущей позиции`() {
+        val first = playerWindow(position = "00:30", rangeCurrent = 30_000f)
+        val second = playerWindow(position = "00:35", rangeCurrent = 35_000f)
+
+        assertEquals(first.diagnosticsSignature(), second.diagnosticsSignature())
+        assertTrue(first.signature() != second.signature())
+    }
+
+    @Test
+    fun `диагностическая подпись меняется при смене трека`() {
+        val first = playerWindow(position = "00:30", rangeCurrent = 30_000f, title = "The Best")
+        val second = playerWindow(position = "00:30", rangeCurrent = 30_000f, title = "Proud Mary")
+
+        assertTrue(first.diagnosticsSignature() != second.diagnosticsSignature())
+    }
+
+    @Test
+    fun `подпись диагностики учитывает решение парсера но не позицию`() {
+        val first = playerWindow(position = "00:30", rangeCurrent = 30_000f)
+        val second = playerWindow(position = "00:35", rangeCurrent = 35_000f)
+        val firstResult = StockPlayerParser.inspectAccessibility(
+            "com.syu.music", first, playing = true, nowMs = 0L,
+        )
+        val secondResult = StockPlayerParser.inspectAccessibility(
+            "com.syu.music", second, playing = true, nowMs = 0L,
+        )
+
+        assertEquals(uiDiagnosticsSignature(first, firstResult), uiDiagnosticsSignature(second, secondResult))
+    }
+
+    @Test
+    fun `throttle переписывает неизменную подпись раз в пять минут`() {
+        val throttle = UiLogThrottle(minIntervalMs = 2_000, anchorIntervalMs = 5 * 60_000)
+        var written = 0
+        var now = 0L
+        val twentyMinutes = 20 * 60_000L
+
+        while (now < twentyMinutes) {
+            if (throttle.shouldLog("same", now)) written += 1
+            now += 1_000
+        }
+
+        assertEquals(4, written)
+    }
 }

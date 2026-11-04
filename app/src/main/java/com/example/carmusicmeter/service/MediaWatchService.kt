@@ -299,9 +299,44 @@ class MediaWatchService : Service() {
             health = health.failure("finalize: ${error.message ?: error.javaClass.simpleName}")
             ListeningRepository.updateCaptureHealth(health)
         }
+        // Прослушивание закрыто (или запись уже недоступна): сохранение больше
+        // не нужно, иначе следующая служба закроет его второй раз.
+        runCatching { app.prefs.openPlay = null }
+    }
+
+    private fun persistOpenPlay(time: TickTime) {
+        runCatching {
+            app.prefs.openPlay = tracker.openPlay(app.eventLog.bootId, time)
+        }.onFailure { error ->
+            health = health.failure("open_play: ${error.message ?: error.javaClass.simpleName}")
+            ListeningRepository.updateCaptureHealth(health)
+        }
+    }
+
+    /**
+     * Закрывает прослушивание, оставшееся от предыдущего процесса.
+     *
+     * Один `track_ended(session_lost)` до первого нового `track_started`: иначе
+     * выключение зажигания в середине трека давало бы второе прослушивание того
+     * же трека после загрузки.
+     */
+    private fun closeRestoredPlay() {
+        val open = runCatching { app.prefs.openPlay }.getOrNull() ?: return
+        if (open.bootId == app.eventLog.bootId) return
+        val time = TickTime(System.currentTimeMillis(), SystemClock.elapsedRealtime())
+        runCatching {
+            val event = tracker.closeRestored(open, time)
+            app.eventLog.append(event)
+            ListeningRepository.record(listOf(event))
+            app.prefs.openPlay = null
+        }.onFailure { error ->
+            health = health.failure("restore_play: ${error.message ?: error.javaClass.simpleName}")
+            ListeningRepository.updateCaptureHealth(health)
+        }
     }
 
     private suspend fun watchLoop() {
+        closeRestoredPlay()
         var tick = 0L
         var accessibilityEnabled = AccessibilityAccess.isEnabled(this)
         while (currentCoroutineContext().isActive && !stopping) {
@@ -409,7 +444,8 @@ class MediaWatchService : Service() {
             sourceReason = reading.reason,
         )
         events += result.events
-        tracker.checkpoint(time, reading.value, reading.max ?: 0)?.let { events += it }
+        val checkpoint = tracker.checkpoint(time, reading.value, reading.max ?: 0)
+        checkpoint?.let { events += it }
 
         if (events.isNotEmpty()) {
             try {
@@ -418,6 +454,12 @@ class MediaWatchService : Service() {
             } catch (error: CaptureWriteException) {
                 throw CaptureFailure("append", error.droppedEvents, error.cause ?: error)
             }
+        }
+
+        // Открытое прослушивание сохраняем только после того, как события легли
+        // на диск: иначе восстановление закрыло бы трек без его начала.
+        if (checkpoint != null || events.any { it.type == "track_started" }) {
+            persistOpenPlay(time)
         }
 
         if (events.any { it.type == "track_started" }) {
@@ -607,7 +649,7 @@ class MediaWatchService : Service() {
         now: Long,
         state: com.example.carmusicmeter.data.StockPlayerState?,
     ): List<LogEvent> {
-        val signature = state?.metaSignature
+        val signature = state?.textSignature
         if (signature == lastStockSignature) return emptyList()
         lastStockSignature = signature
         if (state == null || state.title.isBlank()) return emptyList()

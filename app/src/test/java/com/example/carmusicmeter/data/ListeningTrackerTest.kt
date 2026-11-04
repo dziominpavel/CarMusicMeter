@@ -507,4 +507,84 @@ class ListeningTrackerTest {
 
         assertTrue(events.none { it.type == "track_ended" })
     }
+
+    @Test
+    fun `открытое прослушивание сохраняется пока трек активен и пропадает после закрытия`() {
+        val tracker = ListeningTracker()
+        assertNull(tracker.openPlay("boot1", t(0)))
+
+        tracker.onTick(t(0), snap("A", 15_000), 10, 30)
+        tracker.onTick(t(30_000), snap("A", 45_000), 10, 30)
+        val open = tracker.openPlay("boot1", t(30_000))
+        assertNotNull(open)
+        assertEquals("boot1", open?.bootId)
+        assertEquals(30_000L, open?.playedMs)
+        assertEquals("A", open?.title)
+
+        tracker.finish(t(40_000))
+        assertNull(tracker.openPlay("boot1", t(50_000)))
+    }
+
+    @Test
+    fun `обрыв на паузе восстанавливает playedMs из контрольной точки`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
+        tracker.onTick(t(20_000), snap("A", 20_000, phase = MediaPhase.PAUSED), 10, 30)
+
+        val open = tracker.openPlay("boot1", t(10 * 60_000))!!
+        val restored = ListeningTracker().closeRestored(open, t(0))
+
+        assertEquals("session_lost", restored.fields["endReason"])
+        assertEquals(20_000L, restored.fields["playedMs"])
+        assertEquals(20_000L, restored.fields["endPositionMs"])
+    }
+
+    @Test
+    fun `восстановленное прослушивание закрывается одним session_lost`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 15_000), 10, 30)
+        tracker.onTick(t(30_000), snap("A", 45_000), 10, 30)
+        val open = tracker.openPlay("boot1", t(30_000))!!
+
+        val restored = ListeningTracker().closeRestored(open, t(0, wallMs = baseWall + 8 * 60 * 60 * 1_000L))
+
+        assertEquals("track_ended", restored.type)
+        assertEquals("session_lost", restored.fields["endReason"])
+        assertEquals(30_000L, restored.fields["playedMs"])
+        assertEquals(30_000L, restored.fields["rawPlayedMs"])
+        assertEquals("A", restored.fields["title"])
+        assertEquals(180_000L, restored.fields["durationMs"])
+        assertEquals(false, restored.fields["completed"])
+    }
+
+    @Test
+    fun `восстановленное прослушивание не длиннее трека`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
+        tracker.onTick(t(200_000), snap("A", 200_000), 10, 30)
+        val open = tracker.openPlay("boot1", t(200_000))!!.copy(playedMs = 250_000L)
+
+        val restored = ListeningTracker().closeRestored(open, t(0))
+
+        assertEquals(180_000L, restored.fields["playedMs"])
+        assertEquals(250_000L, restored.fields["rawPlayedMs"])
+    }
+
+    @Test
+    fun `восстановленное прослушивание сохраняет статистику громкости`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 4, 43, source = "mcu")
+        tracker.onVolume(t(1_000), 9, 43, source = "mcu")
+        val open = tracker.openPlay("boot1", t(2_000))!!
+
+        val restored = ListeningTracker().closeRestored(open, t(0))
+
+        @Suppress("UNCHECKED_CAST")
+        val stats = restored.fields["volumeStats"] as Map<String, Map<String, Any?>>
+        val mcu = stats.getValue("mcu")
+        assertEquals(4, mcu["start"])
+        assertEquals(9, mcu["end"])
+        assertEquals(1, mcu["changes"])
+        assertEquals(43, mcu["max"])
+    }
 }

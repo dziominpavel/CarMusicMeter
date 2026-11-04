@@ -9,6 +9,7 @@ import com.example.carmusicmeter.data.DeviceProfile
 import com.example.carmusicmeter.data.EventLog
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.Prefs
+import com.example.carmusicmeter.data.newBootId
 import com.example.carmusicmeter.diagnostics.CrashLogger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,7 @@ class CarMusicMeterApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        eventLog = EventLog(filesDir)
+        eventLog = EventLog(filesDir, bootId = newBootId())
         prefs = Prefs(this)
         ListeningRepository.setTeyesDevice(DeviceProfile.isTeyes(Build.MANUFACTURER, Build.MODEL))
         CrashLogger.install(eventLog)
