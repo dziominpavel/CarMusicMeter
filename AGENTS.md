@@ -1,7 +1,8 @@
 # CarMusicMeter — правила для AI-агента
 
 Единый IDE-нейтральный источник always-on правил. Дополнительные правила — в `.cursor/rules/*.mdc`.
-OpenSpec-скиллы: `.cursor/skills/`, `.devin/skills/`, `.opencode/skills/`; команды: `.cursor/commands/opsx-*.md`, `.devin/workflows/opsx-*.md`, `.opencode/commands/opsx-*.md`.
+OpenSpec-скиллы: `.cursor/skills/`, `.devin/skills/`, `.opencode/skills/`, `.dsh/skills/`; команды: `.cursor/commands/opsx-*.md`, `.devin/workflows/opsx-*.md`, `.opencode/commands/opsx-*.md`.
+В DeepSeek Harness файловых слэш-команд нет: команда — это навык. `/opsx-*` там работают как навыки-алиасы, ведущие к `openspec-*` (см. `.dsh/README.md`).
 
 ## Контекст проекта
 
