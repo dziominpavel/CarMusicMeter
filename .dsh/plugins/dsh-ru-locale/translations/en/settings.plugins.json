@@ -1,7 +1,0 @@
-{
-  "nav": "Built-in plugins",
-  "title": "Built-in plugins",
-  "intro": "Inspect the plugins this deployment ships.",
-  "tabs": "Plugin views",
-  "empty": "This deployment exposes no plugin views."
-}
