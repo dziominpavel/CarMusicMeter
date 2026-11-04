@@ -175,7 +175,7 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "3. Нажми «Снять срез», затем «Экспорт логов» и сохрани ZIP на флешку.",
+                    text = "3. Нажми «Экспорт логов» и сохрани ZIP на флешку: снимок состояния попадёт в архив сам.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

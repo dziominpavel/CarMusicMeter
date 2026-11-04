@@ -46,6 +46,7 @@ import com.example.carmusicmeter.data.StoragePolicy
 import com.example.carmusicmeter.autostart.AutostartScheduler
 import com.example.carmusicmeter.data.StorageStats
 import com.example.carmusicmeter.ui.formatBytes
+import com.example.carmusicmeter.diagnostics.CrashLogger
 import com.example.carmusicmeter.diagnostics.SnapshotWriter
 import com.example.carmusicmeter.probe.MediaSessionProbe
 import com.example.carmusicmeter.service.AccessibilityAccess
@@ -108,6 +109,7 @@ class MainActivity : ComponentActivity() {
                 var exportRange by remember { mutableStateOf(prefs.exportRange) }
                 var showExportDialog by remember { mutableStateOf(false) }
                 var exportPlan by remember { mutableStateOf<ExportPlan?>(null) }
+                var exportSnapshotTaken by remember { mutableStateOf(false) }
                 var pendingRetention by remember { mutableStateOf<RetentionPlan?>(null) }
                 var pendingRetentionDays by remember { mutableStateOf<Int?>(null) }
                 var screenName by rememberSaveable { mutableStateOf(AppScreen.DASHBOARD.name) }
@@ -155,7 +157,20 @@ class MainActivity : ComponentActivity() {
                     refreshStorageStats()
                 }
 
-                LaunchedEffect(showExportDialog, exportRange) {
+                // Снимок снимается один раз при открытии диалога и до расчёта
+                // плана: иначе свежий файл не попадёт в архив и счётчик соврёт.
+                LaunchedEffect(showExportDialog) {
+                    if (showExportDialog) {
+                        exportSnapshotTaken = withContext(Dispatchers.IO) {
+                            captureExportSnapshot(app)
+                        }
+                        exportPlan = withContext(Dispatchers.IO) {
+                            app.eventLog.planExport(exportRange)
+                        }
+                    }
+                }
+
+                LaunchedEffect(exportRange) {
                     if (showExportDialog) {
                         exportPlan = withContext(Dispatchers.IO) {
                             app.eventLog.planExport(exportRange)
@@ -193,7 +208,6 @@ class MainActivity : ComponentActivity() {
                         toast("Открой Настройки → Спецдоступ → Спецвозможности")
                     }
                 }
-                val onSnapshot: () -> Unit = { takeSnapshot() }
                 val onExport: () -> Unit = { showExportDialog = true }
 
                 Box(modifier = Modifier.fillMaxSize()) {
@@ -204,7 +218,6 @@ class MainActivity : ComponentActivity() {
                             onOpenSettings = { screenName = AppScreen.SETTINGS.name },
                             onStartService = onStartService,
                             onOpenNotificationAccess = onOpenNotificationAccess,
-                            onSnapshot = onSnapshot,
                             onExport = onExport,
                         )
 
@@ -314,6 +327,7 @@ class MainActivity : ComponentActivity() {
                     ExportDialog(
                         range = exportRange,
                         plan = exportPlan,
+                        freshSnapshot = exportSnapshotTaken,
                         onRangeChange = { range ->
                             if (range != exportRange) {
                                 exportRange = range
@@ -395,23 +409,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun takeSnapshot() {
-        lifecycleScope.launch {
-            val context = this@MainActivity
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    SnapshotWriter(context, MediaSessionProbe(context)).capture(
-                        reason = "manual",
-                        live = ListeningRepository.state.value.live,
-                    )
-                }
-            }
-            result.onSuccess {
-                toast("Снимок: ${it.name}")
-                refreshStorageStats()
-            }.onFailure { toast("Ошибка снимка: ${it.message}") }
-        }
-    }
+    /**
+     * Снимок «что видно сейчас» перед экспортом. Сбой снимка не должен лишать
+     * пользователя возможности выгрузить журнал: ошибка уходит в файл падений,
+     * архив собирается без свежего снимка.
+     */
+    private fun captureExportSnapshot(app: CarMusicMeterApp): Boolean =
+        runCatching {
+            SnapshotWriter(app, MediaSessionProbe(app)).capture(
+                reason = "export",
+                live = ListeningRepository.state.value.live,
+            )
+        }.onFailure { error ->
+            CrashLogger.record(error, source = "snapshot_export")
+        }.isSuccess
 
     private fun exportLogs(uri: Uri) {
         val pending = pendingExport ?: return

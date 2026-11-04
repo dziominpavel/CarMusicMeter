@@ -23,7 +23,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,7 +50,6 @@ fun DashboardScreen(
     onOpenSettings: () -> Unit,
     onStartService: () -> Unit,
     onOpenNotificationAccess: () -> Unit,
-    onSnapshot: () -> Unit,
     onExport: () -> Unit,
 ) {
     val nowMs by produceState(initialValue = System.currentTimeMillis()) {
@@ -85,7 +83,6 @@ fun DashboardScreen(
                 onStatusAction = onStatusAction,
                 onOpenDiagnostics = onOpenDiagnostics,
                 onOpenSettings = onOpenSettings,
-                onSnapshot = onSnapshot,
                 onExport = onExport,
             )
         } else {
@@ -95,7 +92,6 @@ fun DashboardScreen(
                 onStatusAction = onStatusAction,
                 onOpenDiagnostics = onOpenDiagnostics,
                 onOpenSettings = onOpenSettings,
-                onSnapshot = onSnapshot,
                 onExport = onExport,
             )
         }
@@ -109,7 +105,6 @@ private fun WideDashboard(
     onStatusAction: (CaptureAction) -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenSettings: () -> Unit,
-    onSnapshot: () -> Unit,
     onExport: () -> Unit,
 ) {
     Column(
@@ -130,7 +125,7 @@ private fun WideDashboard(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 NowPlayingCard(state)
-                DashboardActions(onSnapshot = onSnapshot, onExport = onExport)
+                DashboardActions(onExport = onExport)
             }
             Column(
                 modifier = Modifier.weight(1f),
@@ -150,7 +145,6 @@ private fun CompactDashboard(
     onStatusAction: (CaptureAction) -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenSettings: () -> Unit,
-    onSnapshot: () -> Unit,
     onExport: () -> Unit,
 ) {
     Column(
@@ -163,7 +157,7 @@ private fun CompactDashboard(
         DashboardHeader(status, wide = false, onOpenDiagnostics, onOpenSettings)
         StatusBanner(status, onStatusAction)
         NowPlayingCard(state)
-        DashboardActions(onSnapshot = onSnapshot, onExport = onExport)
+        DashboardActions(onExport = onExport)
         TodaySummary(state)
         DiagnosticsEntry(onOpenDiagnostics)
     }
@@ -340,24 +334,14 @@ private fun NowPlayingBody(live: LiveTrack) {
 }
 
 @Composable
-private fun DashboardActions(onSnapshot: () -> Unit, onExport: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        Button(
-            onClick = onExport,
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 56.dp),
-        ) {
-            Text("Экспорт логов", maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-        OutlinedButton(
-            onClick = onSnapshot,
-            modifier = Modifier
-                .weight(1f)
-                .heightIn(min = 56.dp),
-        ) {
-            Text("Снять срез", maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+private fun DashboardActions(onExport: () -> Unit) {
+    Button(
+        onClick = onExport,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 56.dp),
+    ) {
+        Text("Экспорт логов", maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

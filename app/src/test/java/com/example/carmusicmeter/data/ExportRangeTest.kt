@@ -98,6 +98,26 @@ class ExportRangeTest {
         assertEquals(1, plan.files.size)
     }
 
+    @Test
+    fun `свежий снимок экспорта входит в план любого периода`() {
+        val snapshot = stored(
+            "snapshot-20260301-120000-export.json",
+            StoredKind.SNAPSHOT,
+            today,
+            50,
+        )
+        val oldLog = stored("events-2026-01-01.jsonl", StoredKind.LOG, LocalDate.of(2026, 1, 1), 100)
+
+        ExportRange.entries.forEach { range ->
+            val plan = ExportPlanner.plan(listOf(oldLog, snapshot), range, today, now)
+            assertTrue(
+                "снимок должен попасть в архив за $range",
+                plan.files.any { it.file.name == snapshot.file.name },
+            )
+            assertFalse(plan.isEmpty)
+        }
+    }
+
     private fun stored(name: String, kind: StoredKind, date: LocalDate, size: Long): StoredFile =
         StoredFile(
             file = File(name),

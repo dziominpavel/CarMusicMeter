@@ -15,11 +15,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.carmusicmeter.data.ExportPlan
 import com.example.carmusicmeter.data.ExportRange
+import com.example.carmusicmeter.data.StoredKind
 
 @Composable
 fun ExportDialog(
     range: ExportRange,
     plan: ExportPlan?,
+    freshSnapshot: Boolean,
     onRangeChange: (ExportRange) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
@@ -71,6 +73,20 @@ fun ExportDialog(
                         MaterialTheme.colorScheme.onSurface
                     },
                 )
+                if (plan != null && !plan.isEmpty) {
+                    Text(
+                        text = breakdown(plan),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (freshSnapshot) {
+                    Text(
+                        text = "Свежий снимок состояния уже в архиве",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -87,6 +103,18 @@ fun ExportDialog(
             }
         },
     )
+}
+
+/** «3 журнала · 12 снимков · 1 crash-файл» — что именно уедет в ZIP. */
+private fun breakdown(plan: ExportPlan): String {
+    val logs = plan.files.count { it.kind == StoredKind.LOG }
+    val snapshots = plan.files.count { it.kind == StoredKind.SNAPSHOT }
+    val crashes = plan.files.count { it.kind == StoredKind.CRASH }
+    return listOfNotNull(
+        logs.takeIf { it > 0 }?.let { "$it ${pluralWord(it, "журнал", "журнала", "журналов")}" },
+        snapshots.takeIf { it > 0 }?.let { "$it ${pluralWord(it, "снимок", "снимка", "снимков")}" },
+        crashes.takeIf { it > 0 }?.let { "$it ${pluralWord(it, "crash-файл", "crash-файла", "crash-файлов")}" },
+    ).joinToString(" · ")
 }
 
 @Composable

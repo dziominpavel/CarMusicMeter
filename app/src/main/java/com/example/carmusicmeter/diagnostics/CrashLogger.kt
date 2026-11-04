@@ -10,7 +10,10 @@ import java.io.File
  */
 object CrashLogger {
 
+    private var eventLog: EventLog? = null
+
     fun install(log: EventLog) {
+        eventLog = log
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching {
@@ -42,6 +45,27 @@ object CrashLogger {
             } else {
                 throwable.printStackTrace()
             }
+        }
+    }
+
+    /**
+     * Записать некритичный сбой в файл рядом с журналом. На магнитоле нет
+     * logcat, поэтому иначе такая ошибка остаётся невидимой: файл попадает
+     * в экспорт вместе с crash-файлами.
+     */
+    fun record(error: Throwable, source: String) {
+        val log = eventLog ?: return
+        runCatching {
+            val ts = System.currentTimeMillis()
+            File(log.logsDir, "crash-$ts.txt").writeText(
+                buildString {
+                    appendLine("time=$ts")
+                    appendLine("source=$source")
+                    appendLine()
+                    append(error.stackTraceToString())
+                },
+                Charsets.UTF_8,
+            )
         }
     }
 }
