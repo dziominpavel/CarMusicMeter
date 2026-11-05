@@ -6,8 +6,11 @@ rem Build the APK for the head unit. adb is NOT needed on the head unit:
 rem copy dist\CarMusicMeter-*-latest.apk to a USB stick and install it there.
 rem
 rem Usage: build-apk.bat [debug|release] [install]
-rem   (no args)  release build, signed with the keystore from local.properties
-rem   debug      debuggable build with readable crash stack traces (best for the probe)
+rem   (no args)  release build, signed with the keystore from local.properties.
+rem              This is the mode installed on the head unit - use it by default.
+rem   debug      only for readable crash stack traces. Signed with another key, so
+rem              it cannot replace release without uninstalling the app, and that
+rem              deletes the collected log: export logs first.
 rem   install    also install via adb (phone testing only)
 
 set "MODE=release"
