@@ -70,7 +70,11 @@ object ExportPlanner {
         val included = if (cutoff == null) {
             files
         } else {
-            files.filter { effectiveDate(it).let { date -> !date.isBefore(cutoff) } }
+            // Журнал непроверенного времени даты в имени не имеет, а его
+            // lastModified ничего не говорит о времени записи: он попадает в
+            // любую выгрузку, иначе события со сбитыми часами терялись бы при
+            // выгрузке за 7 или 30 дней.
+            files.filter { file -> isUndatedLog(file) || !effectiveDate(file).isBefore(cutoff) }
         }
         val dates = included.map(::effectiveDate)
         val from = dates.minOrNull()?.let(StorageDates::startOfDayMs)
@@ -85,6 +89,10 @@ object ExportPlanner {
             requestedToMs = if (cutoff == null) null else nowMs,
         )
     }
+
+    /** Журнал без даты в имени: время записи в нём не проверено. */
+    private fun isUndatedLog(file: StoredFile): Boolean =
+        file.kind == StoredKind.LOG && file.date == null
 
     private fun effectiveDate(file: StoredFile): LocalDate =
         file.date ?: StorageDates.dateOf(file.lastModified)

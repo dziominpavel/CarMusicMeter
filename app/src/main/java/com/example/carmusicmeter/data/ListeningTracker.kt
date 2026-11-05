@@ -396,10 +396,41 @@ class ListeningTracker {
      *
      * Событие строится по сохранённым полям, поэтому не теряет длительность,
      * путь и статистику громкости. `playedMs` берётся из контрольной точки —
-     * время, пока приложение не работало, не досчитывается.
+     * время, пока приложение не работало, не досчитывается. Событие помечается
+     * `restored = true`, чтобы отчёт не считал его отдельным прослушиванием.
      */
     fun closeRestored(open: OpenPlay, time: TickTime): LogEvent {
-        val snapshot = MediaSnapshot(
+        val restored = activeFrom(open, time, snapshot = null)
+        lastVolume = open.volumeEnd
+        lastVolumeMax = open.volumeMax
+        lastVolumeSource = open.volumeSource
+        return endEvent(restored, time, next = null, explicitReason = "session_lost", restored = true)
+    }
+
+    /**
+     * Продолжает прослушивание, оставшееся от предыдущего процесса.
+     *
+     * Вызывается на первом тике, если играет тот же трек: второй
+     * `track_started` не пишется, `startedAt` и накопленный `playedMs` остаются
+     * от первой половины. Возвращает `false`, если трекер уже занят другим
+     * прослушиванием.
+     */
+    fun adoptRestored(open: OpenPlay, time: TickTime, snapshot: MediaSnapshot): Boolean {
+        if (active != null) return false
+        active = activeFrom(open, time, snapshot)
+        lastVolume = open.volumeEnd
+        lastVolumeMax = open.volumeMax
+        lastVolumeSource = open.volumeSource
+        return true
+    }
+
+    /** Состояние, восстановленное из сохранённого прослушивания. */
+    private fun activeFrom(
+        open: OpenPlay,
+        time: TickTime,
+        snapshot: MediaSnapshot?,
+    ): Active {
+        val saved = MediaSnapshot(
             packageName = open.packageName,
             sessionTag = "stock",
             title = open.title,
@@ -411,16 +442,17 @@ class ListeningTracker {
             mediaId = open.mediaId,
             source = open.source,
         )
-        val restored = Active(
+        val merged = snapshot?.let { preserveSameTrackFields(saved, it) } ?: saved
+        return Active(
             key = open.trackKey,
-            snapshot = snapshot,
+            snapshot = merged,
             startedAtWallMs = open.startedAtWallMs,
             playedMs = open.playedMs,
-            running = false,
+            running = merged.phase == MediaPhase.PLAYING,
             lastTickMonoMs = time.monoMs,
             lastTickWallMs = open.lastTsWallMs,
             lastSeenMonoMs = time.monoMs,
-            lastPositionMs = open.positionMs,
+            lastPositionMs = merged.positionMs,
             lastPositionMonoMs = time.monoMs,
             volumeStart = open.volumeStart,
             volumeLow = open.volumeLow,
@@ -438,33 +470,27 @@ class ListeningTracker {
                 )
             },
             lastCheckpointMonoMs = time.monoMs,
-            lastCheckpointPhase = MediaPhase.PLAYING,
+            lastCheckpointPhase = merged.phase,
         )
-        lastVolume = open.volumeEnd
-        lastVolumeMax = open.volumeMax
-        lastVolumeSource = open.volumeSource
-        return endEvent(restored, time, next = null, explicitReason = "session_lost")
     }
 
     /**
-     * Тот же трек может прийти с неполными полями: плеер присылает переходный
-     * intent без duration/mediaId. Не теряем уже известные значения.
+     * Тот же трек может прийти с неполными или чужими полями: плеер присылает
+     * переходный intent со следующим `play_path` и его `play_total`.
+     *
+     * Поля файла только дополняются: `mediaId`, `durationMs` и `album` уже
+     * начатого прослушивания не меняются, даже если новый snapshot несёт
+     * другие значения. Иначе `track_ended` получал путь и длительность
+     * следующего трека, а пара «старт — окончание» расходилась.
      */
     private fun preserveSameTrackFields(
         old: MediaSnapshot,
         new: MediaSnapshot,
-    ): MediaSnapshot {
-        if (new.durationMs == null) {
-            return new.copy(
-                durationMs = old.durationMs,
-                mediaId = old.mediaId ?: new.mediaId,
-            )
-        }
-        if (new.mediaId == null) {
-            return new.copy(mediaId = old.mediaId)
-        }
-        return new
-    }
+    ): MediaSnapshot = new.copy(
+        durationMs = old.durationMs?.takeIf { it > 0L } ?: new.durationMs?.takeIf { it > 0L },
+        mediaId = old.mediaId?.takeIf { !it.isBlank() } ?: new.mediaId?.takeIf { !it.isBlank() },
+        album = old.album?.takeIf { !it.isBlank() } ?: new.album?.takeIf { !it.isBlank() },
+    )
 
     private fun start(
         time: TickTime,
@@ -666,6 +692,7 @@ class ListeningTracker {
         time: TickTime,
         next: MediaSnapshot?,
         explicitReason: String?,
+        restored: Boolean = false,
     ): LogEvent {
         val endPosition = extrapolatePosition(active, time.monoMs)
         val duration = active.snapshot.durationMs
@@ -696,7 +723,7 @@ class ListeningTracker {
         return LogEvent(
             ts = time.wallMs,
             type = "track_ended",
-            fields = linkedMapOf(
+            fields = linkedMapOf<String, Any?>(
                 "trackKey" to active.key,
                 "package" to active.snapshot.packageName,
                 "source" to active.snapshot.source,
@@ -730,7 +757,11 @@ class ListeningTracker {
                 },
                 "nextPackage" to next?.packageName,
                 "nextTitle" to next?.title,
-            ),
+            ).apply {
+                // Флаг только у восстановленного закрытия: остальные окончания
+                // не должны платить лишним полем в каждой строке журнала.
+                if (restored) put("restored", true)
+            },
         )
     }
 

@@ -13,6 +13,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -35,43 +36,69 @@ class EventLog(
      * чтобы JVM-тесты не зависели от Android-часов.
      */
     private val monoClock: () -> Long = { SystemClock.elapsedRealtime() },
+    /**
+     * Можно ли верить настенным часам. Вынесено параметром, чтобы тесты не
+     * зависели от глобального [ClockStatus].
+     */
+    private val clockVerified: () -> Boolean = { ClockStatus.verified },
 ) {
 
     val logsDir = File(baseDir, "logs").apply { mkdirs() }
     val snapshotsDir = File(baseDir, "snapshots").apply { mkdirs() }
 
+    /** Сколько событий записано с непроверенным временем в этом процессе. */
+    private val unverifiedCount = AtomicLong(0)
+    val unverifiedEvents: Long get() = unverifiedCount.get()
+
     fun todayFile(nowMs: Long = System.currentTimeMillis()): File =
         File(logsDir, "events-${dayStamp(nowMs)}.jsonl")
+
+    /** Журнал непроверенного времени: без даты в имени, чтобы она не врала. */
+    val unverifiedFile: File get() = File(logsDir, UNVERIFIED_LOG_NAME)
+
+    /**
+     * Файл, в который попадёт событие: по дате, если часам можно верить,
+     * иначе — общий непроверенный поток.
+     */
+    fun logFileFor(ts: Long, verified: Boolean = clockVerified()): File =
+        if (verified) todayFile(ts) else unverifiedFile
 
     fun append(event: LogEvent) = appendAll(listOf(event))
 
     fun appendAll(events: List<LogEvent>) {
         if (events.isEmpty()) return
-        val file = todayFile(events.last().ts)
+        val verified = clockVerified()
+        val file = logFileFor(events.last().ts, verified)
         val monoMs = monoClock()
         synchronized(this) {
             FileOutputStream(file, true).use { out ->
                 events.forEach { event ->
-                    val line = Json.eventToJson(event, bootId = bootId, monoMs = monoMs)
+                    val line = Json.eventToJson(
+                        event = event,
+                        bootId = bootId,
+                        monoMs = monoMs,
+                        clockVerified = verified,
+                    )
                     out.write((line + "\n").toByteArray(Charsets.UTF_8))
                 }
                 out.flush()
                 out.fd.sync()
             }
         }
+        if (!verified) unverifiedCount.addAndGet(events.size.toLong())
     }
 
-    /** Счётчики по сегодняшнему файлу: (всего событий, стартов треков). */
+    /** Счётчики по сегодняшнему файлу и непроверенному потоку: (всего, стартов). */
     fun todayCounts(): Pair<Int, Int> {
-        val file = todayFile()
-        if (!file.exists()) return 0 to 0
         var events = 0
         var tracks = 0
-        runCatching {
-            file.forEachLine { line ->
-                if (line.isNotBlank()) {
-                    events += 1
-                    if (line.contains("\"type\":\"track_started\"")) tracks += 1
+        listOf(todayFile(), unverifiedFile).forEach { file ->
+            runCatching {
+                file.forEachLine { line ->
+                    if (line.isNotBlank()) {
+                        events += 1
+                        if (line.contains("\"type\":\"track_started\"")) tracks += 1
+                    }
                 }
             }
         }
@@ -168,6 +195,7 @@ class EventLog(
     ): Int {
         if (plan.files.isEmpty()) error("нет данных за период")
         val entries = ArrayList<ExportFile>(plan.files.size)
+        val logStats = ArrayList<ExportLogStats>()
         val stream = resolver.openOutputStream(uri)
             ?: error("не удалось открыть поток для записи")
         stream.use { output ->
@@ -189,6 +217,11 @@ class EventLog(
                     }
                     zip.closeEntry()
                     entries += ExportFile(path, size, digest.digest().toHex())
+                    // Покрытие выгрузки считается по временам событий, а не по
+                    // датам в именах: имя могло соврать из-за сбитых часов.
+                    if (stored.kind == StoredKind.LOG) {
+                        logStats += ExportLogScanner.scanFile(path, file)
+                    }
                 }
                 val manifest = Json.objectFrom(
                     ExportManifest.build(
@@ -196,7 +229,8 @@ class EventLog(
                         files = entries,
                         exportedAtMs = exportedAtMs,
                         range = plan.rangeInfo(),
-                        coverage = plan.coverage(),
+                        coverage = exportCoverage(logStats, plan.coverage()),
+                        logs = logStats,
                     ),
                 )
                 zip.putNextEntry(ZipEntry("manifest.json"))
@@ -249,6 +283,16 @@ class EventLog(
         SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(ts))
 
     private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+    companion object {
+        /**
+         * Журнал событий, записанных при непроверенных часах.
+         *
+         * Имя без даты — намеренно: дата, которой нельзя верить, не должна
+         * попадать ни в имя файла, ни в `coverage` выгрузки.
+         */
+        const val UNVERIFIED_LOG_NAME = "events-unverified.jsonl"
+    }
 }
 
 /**

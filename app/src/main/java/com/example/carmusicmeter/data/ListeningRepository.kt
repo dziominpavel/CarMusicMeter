@@ -38,6 +38,11 @@ data class LiveState(
     val droppedEvents: Int = 0,
     val teyesDevice: Boolean = false,
     val notificationListenerConnected: Boolean = false,
+    /** Часам магнитолы можно верить; false — журнал идёт в непроверенный поток. */
+    val clockVerified: Boolean = true,
+    val clockLastVerifiedAt: Long? = null,
+    val clockShiftMs: Long = 0,
+    val clockUnverifiedEvents: Long = 0,
 ) {
     /** Показывать ли Teyes-специфичные источники и настройки. */
     val teyesRelevant: Boolean
@@ -150,6 +155,18 @@ object ListeningRepository {
                 tracksToday = previous.tracksToday + events.count { it.type == "track_started" },
                 lastEventAt = events.last().ts,
                 recent = (events.reversed() + previous.recent).take(50),
+            )
+        }
+    }
+
+    /** Состояние часов магнитолы для пульта и диагностики. */
+    fun updateClock(unverifiedEvents: Long) {
+        _state.update { previous ->
+            previous.copy(
+                clockVerified = ClockStatus.verified,
+                clockLastVerifiedAt = ClockStatus.lastVerifiedWallMs.takeIf { it > 0L },
+                clockShiftMs = ClockStatus.shiftMs,
+                clockUnverifiedEvents = unverifiedEvents,
             )
         }
     }

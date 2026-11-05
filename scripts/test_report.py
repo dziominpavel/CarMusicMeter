@@ -45,8 +45,9 @@ def end(
     duration: int | None = 180_000,
     source: str = "media_session",
     raw_played: int | None = None,
+    restored: bool = False,
 ):
-    return {
+    event = {
         "ts": ts,
         "type": "track_ended",
         "trackKey": key,
@@ -63,6 +64,9 @@ def end(
         "volumeStart": 10,
         "volumeEnd": 12,
     }
+    if restored:
+        event["restored"] = True
+    return event
 
 
 class ReportTest(unittest.TestCase):
@@ -386,6 +390,108 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(BASE, ordered[0]["ts"])
         self.assertEqual(BASE + 60_000, ordered[1]["ts"])
         self.assertNotIn("_rawTs", ordered[0])
+
+    def test_unverified_events_without_correction_are_excluded(self) -> None:
+        old_key = "com.syu.music::2023::artist"
+        new_key = "com.syu.music::2026::artist"
+        unverified_start = {
+            "ts": 1_683_706_439_724,
+            "type": "track_started",
+            "trackKey": old_key,
+            "package": "com.syu.music",
+            "title": "2023",
+            "artist": "artist",
+            "durationMs": 180_000,
+            "clockVerified": False,
+        }
+        unverified_end = {
+            "ts": 1_683_706_500_000,
+            "type": "track_ended",
+            "trackKey": old_key,
+            "package": "com.syu.music",
+            "title": "2023",
+            "artist": "artist",
+            "durationMs": 180_000,
+            "playedMs": 60_000,
+            "rawPlayedMs": 60_000,
+            "endPositionMs": 60_000,
+            "endReason": "skipped",
+            "clockVerified": False,
+        }
+        events = [
+            unverified_start,
+            unverified_end,
+            dict(start(BASE, new_key, "2026"), clockVerified=True),
+            dict(end(BASE + 60_000, new_key, 60_000, 60_000, title="2026"), clockVerified=True),
+        ]
+
+        jumps = report.clock_jumps(events)
+        dated, undated = report.split_by_date(events, jumps, BASE + 3_600_000)
+
+        self.assertEqual(2, len(dated))
+        self.assertEqual(2, len(undated))
+        self.assertEqual(1, report.undated_summary(undated)["starts"])
+
+        metrics, sessions, _, _ = report.analyze(dated, 10 * 60 * 1000)
+        self.assertEqual(1, len(metrics))
+        self.assertEqual(1, len(sessions))
+        self.assertEqual(BASE, sessions[0]["start"])
+
+    def test_unverified_event_is_dated_by_clock_jump(self) -> None:
+        boot = "54034c83"
+        event = {
+            "ts": 1_683_706_439_724,
+            "type": "service_started",
+            "bootId": boot,
+            "monoMs": 18_739,
+            "clockVerified": False,
+        }
+        jump = {
+            "ts": 1_793_892_693_340,
+            "type": "clock_changed",
+            "bootId": boot,
+            "monoMs": 62_765,
+            "wallDelta": 110_186_210_096,
+            "monoDelta": 507,
+            "shiftMs": 110_186_209_589,
+        }
+
+        ordered = report.order_events([event, jump])
+        dated, undated = report.split_by_date(
+            ordered, report.clock_jumps(ordered), 1_793_893_274_778,
+        )
+
+        self.assertEqual([], undated)
+        self.assertEqual(2, len(dated))
+
+    def test_legacy_far_past_date_is_unconfirmed(self) -> None:
+        exported_at = 1_793_893_274_778
+        old_event = {"ts": 1_683_706_439_724, "type": "stock_player_ui"}
+        fresh_event = {"ts": 1_793_859_523_984, "type": "stock_player_ui"}
+
+        dated, undated = report.split_by_date([old_event, fresh_event], {}, exported_at)
+
+        self.assertEqual([fresh_event], dated)
+        self.assertEqual([old_event], undated)
+        self.assertEqual(1, report.undated_summary(undated)["events"])
+
+    def test_restored_close_is_not_a_separate_play(self) -> None:
+        key = "com.syu.music::wake me up::avicii"
+        events = [
+            start(BASE, key, "Wake Me Up", "Avicii"),
+            end(BASE + 1_000, key, 0, 0, reason="session_lost", title="Wake Me Up", artist="Avicii", restored=True),
+            start(BASE + 2_000, key, "Wake Me Up", "Avicii"),
+            end(BASE + 122_000, key, 120_000, 120_000, title="Wake Me Up", artist="Avicii"),
+        ]
+
+        metrics, _, _, _ = report.analyze(events, 10 * 60 * 1000)
+        track = metrics[0]
+
+        self.assertEqual(1, track["restored"])
+        self.assertEqual(1, track["restored_empty"])
+        self.assertEqual(1, track["plays"])
+        self.assertEqual(1, track["closed_plays"])
+        self.assertAlmostEqual(120_000 / 180_000, track["listened"])
 
 
 if __name__ == "__main__":

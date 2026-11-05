@@ -10,11 +10,13 @@ object Json {
         event: LogEvent,
         bootId: String? = null,
         monoMs: Long? = null,
+        clockVerified: Boolean? = null,
     ): String = JSONObject().apply {
         put("ts", event.ts)
         put("type", event.type)
         if (bootId != null) put("bootId", bootId)
         if (monoMs != null) put("monoMs", monoMs)
+        if (clockVerified != null) put("clockVerified", clockVerified)
         event.fields.forEach { (key, value) -> put(key, toJsonValue(value)) }
     }.toString()
 

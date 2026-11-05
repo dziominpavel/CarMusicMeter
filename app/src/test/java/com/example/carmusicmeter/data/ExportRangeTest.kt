@@ -99,6 +99,25 @@ class ExportRangeTest {
     }
 
     @Test
+    fun `журнал непроверенного времени попадает в любой период`() {
+        val unverified = StoredFile(
+            file = File(EventLog.UNVERIFIED_LOG_NAME),
+            kind = StoredKind.LOG,
+            date = null,
+            size = 10,
+            lastModified = StorageDates.startOfDayMs(LocalDate.of(2026, 1, 1)),
+        )
+
+        ExportRange.entries.forEach { range ->
+            val plan = ExportPlanner.plan(listOf(unverified), range, today, now)
+            assertTrue(
+                "непроверенный журнал должен попасть в выгрузку за $range",
+                plan.files.contains(unverified),
+            )
+        }
+    }
+
+    @Test
     fun `свежий снимок экспорта входит в план любого периода`() {
         val snapshot = stored(
             "snapshot-20260301-120000-export.json",

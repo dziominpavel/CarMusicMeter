@@ -258,6 +258,65 @@ def order_events(events: list[dict]) -> list[dict]:
 # ---------- анализ ----------
 
 
+# События без отметки о достоверности часов (архивы схемы 1) считаются
+# датированными, если их дата не раньше чем за год до выгрузки: приложение
+# появилось в 2026-м, и записей из прошлого у него быть не может.
+CONFIRMATION_HORIZON_MS = 365 * 24 * 60 * 60 * 1000
+
+
+def date_is_confirmed(
+    event: dict,
+    jumps: dict[str, list[tuple[int, int]]],
+    exported_at_ms: int | None,
+) -> bool:
+    """Можно ли верить дате события.
+
+    ``clockVerified`` — отметка новой сборки. Непроверенное событие всё же
+    датируется, если в его процессе есть ``clock_changed`` позже него: отчёт
+    уже сдвинул ``ts`` по поправке. Архивы схемы 1 отметки не имеют, для них
+    остаётся эвристика «слишком старая дата невозможна».
+    """
+    flag = event.get("clockVerified")
+    if flag is True:
+        return True
+    boot = event.get("bootId")
+    mono = event.get("monoMs")
+    if flag is False:
+        if boot is None or mono is None:
+            return False
+        return any(jump_mono > int(mono) for jump_mono, _ in jumps.get(boot, ()))
+    if exported_at_ms is None:
+        return True
+    return int(event.get("ts") or 0) >= exported_at_ms - CONFIRMATION_HORIZON_MS
+
+
+def split_by_date(
+    events: list[dict],
+    jumps: dict[str, list[tuple[int, int]]],
+    exported_at_ms: int | None,
+) -> tuple[list[dict], list[dict]]:
+    """Делит события на датированные и неподтверждённые."""
+    dated: list[dict] = []
+    undated: list[dict] = []
+    for event in events:
+        if date_is_confirmed(event, jumps, exported_at_ms):
+            dated.append(event)
+        else:
+            undated.append(event)
+    return dated, undated
+
+
+def undated_summary(undated: list[dict]) -> dict:
+    """Сколько событий осталось без подтверждённой даты."""
+    timestamps = [int(event.get("ts") or 0) for event in undated]
+    return {
+        "events": len(undated),
+        "starts": sum(1 for event in undated if event.get("type") == "track_started"),
+        "first_ts": min(timestamps) if timestamps else None,
+        "last_ts": max(timestamps) if timestamps else None,
+    }
+
+
 def fmt_ms(ms: float | int | None) -> str:
     if not ms:
         return "-"
@@ -437,6 +496,7 @@ def analyze(events: list[dict], session_gap_ms: int):
                 "duration": duration,
                 "end_pos": end_pos,
                 "reason": event.get("endReason"),
+                "restored": bool(event.get("restored")),
                 "source": event.get("source") or start.get("source") or "media_session",
                 "vol_start": event.get("volumeStart", start.get("volume")),
                 "vol_end": event.get("volumeEnd", last_volume),
@@ -511,7 +571,10 @@ def analyze(events: list[dict], session_gap_ms: int):
         for play in closed:
             duration = play.get("duration")
             if duration and duration > 0:
-                listened_values.append(min(play["played"] / duration, 1.0))
+                # Пустое восстановленное закрытие — артефакт перезапуска
+                # процесса, а не прослушивание: «слышал 0%» оно не портит.
+                if not (play.get("restored") and play["played"] <= 0):
+                    listened_values.append(min(play["played"] / duration, 1.0))
                 if play["reason"] in RATED_REASONS:
                     progress = play.get("end_pos")
                     if progress is None:
@@ -545,11 +608,15 @@ def analyze(events: list[dict], session_gap_ms: int):
         early = sum(1 for point in skip_points if point < 0.25)
         played_total = sum(play["played"] for play in closed)
         raw_played_total = sum(play.get("raw_played", play["played"]) for play in closed)
+        restored = sum(1 for play in closed if play.get("restored"))
+        restored_empty = sum(
+            1 for play in closed if play.get("restored") and play["played"] <= 0
+        )
         if open_play:
             played_total += open_play["played"]
             raw_played_total += open_play.get("raw_played", open_play["played"])
-        plays_total = len(track["starts"])
-        closed_total = len(closed)
+        plays_total = len(track["starts"]) - restored_empty
+        closed_total = len(closed) - restored_empty
         durations = [play["duration"] for play in closed if play.get("duration")]
         if open_play and open_play.get("duration"):
             durations.append(open_play["duration"])
@@ -572,6 +639,8 @@ def analyze(events: list[dict], session_gap_ms: int):
             "not_played": not_played,
             "stopped": stopped,
             "unknown": unknown,
+            "restored": restored,
+            "restored_empty": restored_empty,
             "played_ms": played_total,
             "raw_played_ms": raw_played_total,
             "censored_ms": max(0, raw_played_total - played_total),
@@ -728,6 +797,7 @@ def render_report(
     metrics, sessions, manifests, sources, event_count,
     malformed, problems, position_resets, args,
     source_stats=None, gap_stats=None, media_stats=None, clock_stats=None,
+    undated_stats=None,
 ):
     total_played = sum(track["played_ms"] or 0 for track in metrics)
     closed = sum(track["closed_plays"] for track in metrics)
@@ -750,6 +820,7 @@ def render_report(
     volume_known = sum(track["volume_known"] for track in metrics)
     volume_unknown = sum(track["volume_unknown"] for track in metrics)
     clock_stats = clock_stats or {"jumps": 0, "corrected": 0}
+    undated_stats = undated_stats or {"events": 0, "starts": 0}
     first_ts = sessions[0]["start"] if sessions else None
     last_ts = sessions[-1]["end"] if sessions else None
     devices = sorted({(m.get("deviceId") or "?") for m in manifests if m})
@@ -790,6 +861,11 @@ def render_report(
         )
 
     lines.append("")
+    if undated_stats.get("events"):
+        lines.append(
+            f"Дата не подтверждена: {undated_stats['events']} событий · "
+            f"{undated_stats['starts']} стартов — в период и метрики не входят"
+        )
     if first_ts and last_ts:
         lines.append(f"Период: {time_of(first_ts)} — {time_of(last_ts)}")
     lines.append(
@@ -807,6 +883,11 @@ def render_report(
     )
     if censored:
         lines.append(f"Цензурировано (rawPlayedMs > playedMs): {fmt_ms(censored)}")
+    restored = sum(track.get("restored", 0) for track in metrics)
+    if restored:
+        lines.append(
+            f"Восстановленные закрытия: {restored} — не считаются отдельными прослушиваниями"
+        )
     if media_stats.get("total"):
         lines.append(
             f"Кнопки: next {media_stats['next']} · previous {media_stats['previous']} · "
@@ -857,12 +938,16 @@ def main() -> int:
     events, malformed, sources, manifests, problems = load_exports(
         args.paths, verify=not args.no_verify,
     )
+    exported_at = max((m.get("exportedAtMs") or 0) for m in manifests) if manifests else None
+    jumps = clock_jumps(events)
+    dated, undated = split_by_date(events, jumps, exported_at or None)
+    undated_stats = undated_summary(undated)
     metrics, sessions, _medians, position_resets = analyze(
-        events, args.session_gap * 60 * 1000,
+        dated, args.session_gap * 60 * 1000,
     )
-    source_stats = source_summary(events)
-    gap_stats = capture_gap_summary(events)
-    media_stats = media_button_summary(events)
+    source_stats = source_summary(dated)
+    gap_stats = capture_gap_summary(dated)
+    media_stats = media_button_summary(dated)
     clock_stats = {
         "jumps": sum(1 for event in events if event.get("type") == "clock_changed"),
         "corrected": sum(1 for event in events if "_rawTs" in event),
@@ -872,7 +957,8 @@ def main() -> int:
         fields = [
             "key", "package", "title", "artist", "plays", "closed_plays", "rated_plays", "open",
             "completed", "skipped", "interrupted", "service_stopped", "session_lost",
-            "not_played", "stopped", "unknown", "played_ms", "raw_played_ms", "censored_ms",
+            "not_played", "stopped", "unknown", "restored", "restored_empty",
+            "played_ms", "raw_played_ms", "censored_ms",
             "duration_ms", "completion", "listened", "skip_rate",
             "early_skip_rate", "early_skips", "avg_skip_pct", "volume_delta", "volume_vs_trip",
             "volume_known", "volume_unknown", "volume_changes", "volume_up", "volume_down",
@@ -918,7 +1004,10 @@ def main() -> int:
             "volume_unknown": sum(track["volume_unknown"] for track in metrics),
             "clock_jumps": clock_stats["jumps"],
             "clock_corrected": clock_stats["corrected"],
+            "undated_events": undated_stats["events"],
+            "undated_starts": undated_stats["starts"],
         },
+        "undated": undated_stats,
         "source_stats": source_stats,
         "capture_gaps": gap_stats,
         "media_buttons": media_stats,
@@ -934,7 +1023,7 @@ def main() -> int:
         print(render_report(
             metrics, sessions, manifests, sources, len(events), malformed,
             problems, position_resets, args, source_stats, gap_stats, media_stats,
-            clock_stats,
+            clock_stats, undated_stats,
         ))
 
     if problems and args.strict:

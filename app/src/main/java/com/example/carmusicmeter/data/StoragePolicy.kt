@@ -118,7 +118,7 @@ object RetentionPlanner {
 
         policy.cutoff(today)?.let { cutoff ->
             keptLogs
-                .filter { it.date != null && it.date.isBefore(cutoff) && it.date != today }
+                .filter { policyDate(it, today).isBefore(cutoff) && policyDate(it, today) != today }
                 .forEach {
                     deletedLogs += it
                     keptLogs.remove(it)
@@ -128,8 +128,8 @@ object RetentionPlanner {
         if (policy.maxBytes > 0) {
             var total = keptLogs.sumOf { it.size }
             val candidates = keptLogs
-                .filter { it.date != null && it.date != today }
-                .sortedWith(compareBy<StoredFile> { it.date }.thenBy { it.lastModified })
+                .filter { policyDate(it, today) != today }
+                .sortedWith(compareBy<StoredFile> { policyDate(it, today) }.thenBy { it.lastModified })
             for (candidate in candidates) {
                 if (total <= policy.maxBytes) break
                 deletedLogs += candidate
@@ -155,6 +155,16 @@ object RetentionPlanner {
             crashes = deletedCrashes,
         )
     }
+
+    /**
+     * Дата файла для политики хранения.
+     *
+     * У журнала непроверенного времени (`events-unverified.jsonl`) даты нет:
+     * время записи в нём не подтверждено, поэтому по возрасту его удалять
+     * нельзя — считаем его сегодняшним и защищаем как текущий день.
+     */
+    private fun policyDate(file: StoredFile, today: LocalDate): LocalDate =
+        file.date ?: today
 
     private fun crashTime(file: StoredFile): Long =
         StorageDates.crashTime(file.file.name) ?: file.lastModified

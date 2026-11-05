@@ -9,6 +9,7 @@ import com.example.carmusicmeter.BuildConfig
 import com.example.carmusicmeter.CarMusicMeterApp
 import com.example.carmusicmeter.data.AccessibilityConnection
 import com.example.carmusicmeter.data.AudioDiagnostics
+import com.example.carmusicmeter.data.ClockStatus
 import com.example.carmusicmeter.data.FytMetadataStatus
 import com.example.carmusicmeter.data.Json
 import com.example.carmusicmeter.data.ListeningRepository
@@ -55,6 +56,7 @@ class SnapshotWriter(
         val volumeMax = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
         val state = ListeningRepository.state.value
+        val eventLog = (context.applicationContext as CarMusicMeterApp).eventLog
 
         return JSONObject().apply {
             put("capturedAt", System.currentTimeMillis())
@@ -83,6 +85,9 @@ class SnapshotWriter(
                 AccessibilityConnection.isConnected(SystemClock.elapsedRealtime()),
             )
             put("fytMetadataService", FytMetadataStatus.toJson())
+            // Часы магнитолы: по этому блоку видно, можно ли верить датам
+            // событий и почему часть журнала лежит в непроверенном потоке.
+            put("clock", Json.toJsonValue(ClockStatus.toJson(eventLog.unverifiedEvents)))
             put("serviceRunning", state.serviceRunning)
             put("volume", JSONObject().apply {
                 put("music", volume)

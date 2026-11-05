@@ -71,6 +71,23 @@ class StoragePolicyTest {
     }
 
     @Test
+    fun `журнал непроверенного времени не удаляется ни по сроку, ни по объёму`() {
+        val unverified = stored(EventLog.UNVERIFIED_LOG_NAME, null, size = 1_000)
+        val old = stored("events-2026-01-01.jsonl", LocalDate.of(2026, 1, 1), size = 100)
+
+        val plan = RetentionPlanner.plan(
+            logs = listOf(unverified, old),
+            snapshots = emptyList(),
+            crashes = emptyList(),
+            policy = StoragePolicy(retentionDays = 1, maxBytes = 1),
+            today = today,
+        )
+
+        assertEquals(listOf(old), plan.logs)
+        assertFalse(plan.logs.contains(unverified))
+    }
+
+    @Test
     fun `снимки и crash-файлы ограничены количеством`() {
         val snapshots = (0..600).map { index ->
             val file = File("snapshot-20260101-1200${index.toString().padStart(2, '0')}-manual.json")

@@ -462,6 +462,110 @@ class ListeningTrackerTest {
     }
 
     @Test
+    fun `переходный intent с длительностью следующего трека не подменяет поля`() {
+        val tracker = ListeningTracker()
+        // Случай из журнала 2026-11-05: плеер на переходе отдаёт старый title,
+        // но новый путь и длительность следующего трека.
+        val started = snap("What Do You Mean?", durationMs = 208_543L)
+            .copy(mediaId = "/music/justin.flac")
+        val transition = snap("What Do You Mean?", durationMs = 242_187L).copy(
+            mediaId = "/music/prishla-pora.flac",
+            phase = MediaPhase.PAUSED,
+        )
+        val next = snap("Пришла пора", durationMs = 242_187L)
+            .copy(mediaId = "/music/prishla-pora.flac")
+
+        tracker.onTick(t(0), started, 10, 30)
+        tracker.onTick(t(34_000), transition, 10, 30)
+        val events = tracker.onTick(t(34_100), next, 10, 30).events
+
+        val ended = events.single { it.type == "track_ended" }
+        assertEquals("What Do You Mean?", ended.fields["title"])
+        assertEquals("/music/justin.flac", ended.fields["mediaId"])
+        assertEquals(208_543L, ended.fields["durationMs"])
+        assertEquals("Пришла пора", events.last { it.type == "track_started" }.fields["title"])
+    }
+
+    @Test
+    fun `нулевая длительность считается неизвестной и дописывается позже`() {
+        val tracker = ListeningTracker()
+
+        tracker.onTick(t(0), snap("A", durationMs = 0L), 10, 30)
+        tracker.onTick(t(1_000), snap("A", durationMs = 180_000L), 10, 30)
+        val events = tracker.onTick(t(2_000), snap("B", durationMs = 180_000L), 10, 30).events
+
+        assertEquals(180_000L, events.single { it.type == "track_ended" }.fields["durationMs"])
+    }
+
+    @Test
+    fun `восстановленное прослушивание продолжается без второго старта`() {
+        val tracker = ListeningTracker()
+        val live = snap("Track A", 31_000)
+        val open = openPlay(trackKey = live.trackKey)
+
+        assertTrue(tracker.adoptRestored(open, t(0), live))
+        val sameTick = tracker.onTick(t(1_000), snap("Track A", 32_000), 10, 30)
+        assertTrue(sameTick.events.none { it.type == "track_started" })
+
+        val events = tracker.onTick(t(31_000), snap("B"), 10, 30).events
+        val ended = events.single { it.type == "track_ended" }
+        assertEquals("Track A", ended.fields["title"])
+        assertEquals(baseWall - 30_000L, ended.fields["startedAt"])
+        assertTrue((ended.fields["playedMs"] as Long) >= 60_000L)
+        assertEquals(null, ended.fields["restored"])
+    }
+
+    @Test
+    fun `закрытие восстановленного прослушивания помечено restored`() {
+        val tracker = ListeningTracker()
+
+        val event = tracker.closeRestored(openPlay(trackKey = snap("Track A").trackKey), t(0))
+
+        assertEquals("session_lost", event.fields["endReason"])
+        assertEquals(true, event.fields["restored"])
+        assertEquals(30_000L, event.fields["playedMs"])
+        assertEquals(30_000L, event.fields["rawPlayedMs"])
+        assertEquals("Track A", event.fields["title"])
+        assertEquals(180_000L, event.fields["durationMs"])
+    }
+
+    @Test
+    fun `занятый трекер не принимает восстановление`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("X"), 10, 30)
+
+        val open = openPlay(trackKey = snap("Track A").trackKey)
+
+        assertTrue(!tracker.adoptRestored(open, t(1_000), snap("Track A", 0)))
+    }
+
+    private fun openPlay(
+        trackKey: String,
+        playedMs: Long = 30_000L,
+    ) = OpenPlay(
+        bootId = "previous",
+        trackKey = trackKey,
+        packageName = "com.example.player",
+        source = StockPlayerSources.MEDIA_SESSION,
+        title = "Track A",
+        artist = "Artist",
+        album = "Album",
+        mediaId = "/music/a.flac",
+        durationMs = 180_000L,
+        positionMs = 30_000L,
+        playedMs = playedMs,
+        startedAtWallMs = baseWall - 30_000L,
+        lastTsWallMs = baseWall - 1_000L,
+        volumeStart = 10,
+        volumeLow = 10,
+        volumeHigh = 12,
+        volumeEnd = 12,
+        volumeMax = 30,
+        volumeChanges = 2,
+        volumeSource = "audio",
+    )
+
+    @Test
     fun `сон на паузе закрывает трек на последнем тике`() {
         val tracker = ListeningTracker()
         tracker.onTick(t(0), snap("A"), 10, 30)

@@ -33,7 +33,7 @@ data class ExportFile(
 object ExportManifest {
 
     /** Версия формата manifest.json; меняется только при несовместимых правках полей. */
-    const val SCHEMA_VERSION = 1
+    const val SCHEMA_VERSION = 2
 
     fun build(
         info: ExportInfo,
@@ -41,6 +41,7 @@ object ExportManifest {
         exportedAtMs: Long,
         range: ExportRangeInfo? = null,
         coverage: ExportCoverage? = null,
+        logs: List<ExportLogStats> = emptyList(),
     ): Map<String, Any?> {
         val manifest = linkedMapOf<String, Any?>(
             "kind" to "carmusicmeter-export",
@@ -71,6 +72,18 @@ object ExportManifest {
                 "fromMs" to coverage.fromMs,
                 "toMs" to coverage.toMs,
             )
+        }
+        if (logs.isNotEmpty()) {
+            manifest["logs"] = logs.map { log ->
+                linkedMapOf(
+                    "path" to log.path,
+                    "events" to log.events,
+                    "fromMs" to log.fromMs,
+                    "toMs" to log.toMs,
+                    "unverified" to log.unverified,
+                    "clockChanged" to log.clockChanged,
+                )
+            }
         }
         manifest["files"] = files.map { file ->
             linkedMapOf(

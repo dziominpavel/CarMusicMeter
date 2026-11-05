@@ -116,6 +116,7 @@ private fun WideDashboard(
     ) {
         DashboardHeader(status, wide = true, onOpenDiagnostics, onOpenSettings)
         StatusBanner(status, onStatusAction)
+        ClockWarningCard(state)
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -156,6 +157,7 @@ private fun CompactDashboard(
     ) {
         DashboardHeader(status, wide = false, onOpenDiagnostics, onOpenSettings)
         StatusBanner(status, onStatusAction)
+        ClockWarningCard(state)
         NowPlayingCard(state)
         DashboardActions(onExport = onExport)
         TodaySummary(state)
@@ -342,6 +344,41 @@ private fun DashboardActions(onExport: () -> Unit) {
             .heightIn(min = 56.dp),
     ) {
         Text("Экспорт логов", maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+/**
+ * Предупреждение о сбитых часах магнитолы.
+ *
+ * Пока часы не подтверждены, события идут в непроверенный журнал: их дату
+ * восстановит отчёт, но пользователю стоит об этом знать на главном экране.
+ */
+@Composable
+private fun ClockWarningCard(state: LiveState) {
+    if (state.clockVerified) return
+    Surface(
+        shape = AppCardShape,
+        color = MaterialTheme.colorScheme.errorContainer,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "Часы магнитолы не синхронизированы",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Text(
+                text = "События пишутся в непроверенный журнал и получат дату " +
+                    "после синхронизации времени. Непроверенных событий: " +
+                    "${state.clockUnverifiedEvents}.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+        }
     }
 }
 

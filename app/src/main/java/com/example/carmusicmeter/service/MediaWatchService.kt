@@ -31,6 +31,7 @@ import com.example.carmusicmeter.data.CaptureHealth
 import com.example.carmusicmeter.data.CaptureWrite
 import com.example.carmusicmeter.data.CaptureWriteException
 import com.example.carmusicmeter.data.ClockJumpDetector
+import com.example.carmusicmeter.data.ClockStatus
 import com.example.carmusicmeter.data.DeviceProfile
 import com.example.carmusicmeter.data.FytMetadataStatus
 import com.example.carmusicmeter.data.ListeningRepository
@@ -39,8 +40,12 @@ import com.example.carmusicmeter.data.LiveTrack
 import com.example.carmusicmeter.data.LogEvent
 import com.example.carmusicmeter.data.MediaButtonEvent
 import com.example.carmusicmeter.data.MediaPhase
+import com.example.carmusicmeter.data.MediaSnapshot
 import com.example.carmusicmeter.data.NoSourceGapTracker
+import com.example.carmusicmeter.data.OpenPlay
+import com.example.carmusicmeter.data.RestoreDecision
 import com.example.carmusicmeter.data.ServiceProcessInfo
+import com.example.carmusicmeter.data.decideRestore
 import com.example.carmusicmeter.data.ServiceStartGate
 import com.example.carmusicmeter.data.SourcePicker
 import com.example.carmusicmeter.data.StockPlayerBridge
@@ -97,6 +102,13 @@ class MediaWatchService : Service() {
     private var lastReading = VolumeReading(0, 0, VolumeSource.AUDIO)
     private var lastClockWallMs: Long? = null
     private var lastClockMonoMs: Long? = null
+
+    /** Когда последний раз сохраняли достоверное время; так первый тик пишет сразу. */
+    private var lastClockPersistMonoMs = -60_000L
+
+    /** Прослушивание от прошлого процесса, решение по которому ещё не принято. */
+    private var pendingRestored: OpenPlay? = null
+    private var pendingRestoredSinceMonoMs = 0L
     private var notificationAccess = false
     private var finalized = false
 
@@ -169,6 +181,7 @@ class MediaWatchService : Service() {
         ListeningRepository.setTeyesDevice(isTeyesUnit)
         ListeningRepository.setNotificationAccess(notificationAccess)
         ListeningRepository.setAccessibilityEnabled(AccessibilityAccess.isEnabled(this))
+        ListeningRepository.updateClock(app.eventLog.unverifiedEvents)
     }
 
     private fun registerStockReceiver() {
@@ -314,29 +327,65 @@ class MediaWatchService : Service() {
     }
 
     /**
-     * Закрывает прослушивание, оставшееся от предыдущего процесса.
+     * Запоминает прослушивание, оставшееся от предыдущего процесса.
      *
-     * Один `track_ended(session_lost)` до первого нового `track_started`: иначе
-     * выключение зажигания в середине трека давало бы второе прослушивание того
-     * же трека после загрузки.
+     * Решение принимается на первом тике ([resolvePendingRestored]): если
+     * играет тот же трек, прослушивание продолжается, иначе оно закрывается
+     * одним `track_ended(restored = true)`. Раньше закрытие выполнялось сразу,
+     * и обновление APK во время трека давало лишнее прослушивание на 0 мс.
      */
-    private fun closeRestoredPlay() {
+    private fun loadPendingRestored() {
         val open = runCatching { app.prefs.openPlay }.getOrNull() ?: return
         if (open.bootId == app.eventLog.bootId) return
-        val time = TickTime(System.currentTimeMillis(), SystemClock.elapsedRealtime())
-        runCatching {
-            val event = tracker.closeRestored(open, time)
-            app.eventLog.append(event)
-            ListeningRepository.record(listOf(event))
+        pendingRestored = open
+        pendingRestoredSinceMonoMs = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * Продолжает или закрывает восстановленное прослушивание.
+     *
+     * Возвращает событие, если прослушивание пришлось закрыть. Пока снимок не
+     * пришёл, ожидание длится [RESTORE_GRACE_MS]: плеер мог ещё не отдать
+     * метаданные после холодного старта.
+     */
+    private fun resolvePendingRestored(time: TickTime, snapshot: MediaSnapshot?): LogEvent? {
+        val pending = pendingRestored ?: return null
+        when (
+            decideRestore(
+                pendingTrackKey = pending.trackKey,
+                snapshotTrackKey = snapshot?.trackKey,
+                elapsedMs = time.monoMs - pendingRestoredSinceMonoMs,
+            )
+        ) {
+            RestoreDecision.WAIT -> return null
+
+            RestoreDecision.CONTINUE -> {
+                pendingRestored = null
+                if (snapshot != null && tracker.adoptRestored(pending, time, snapshot)) {
+                    // Тот же трек: одно прослушивание вместо закрытия на 0 мс и
+                    // второго старта. Состояние обновляем сразу — если процесс
+                    // убьют, следующий подхватит актуальные playedMs и startedAt.
+                    persistOpenPlay(time)
+                    return null
+                }
+            }
+
+            RestoreDecision.CLOSE -> Unit
+        }
+
+        pendingRestored = null
+        return runCatching {
+            val event = tracker.closeRestored(pending, time)
             app.prefs.openPlay = null
+            event
         }.onFailure { error ->
             health = health.failure("restore_play: ${error.message ?: error.javaClass.simpleName}")
             ListeningRepository.updateCaptureHealth(health)
-        }
+        }.getOrNull()
     }
 
     private suspend fun watchLoop() {
-        closeRestoredPlay()
+        loadPendingRestored()
         var tick = 0L
         var accessibilityEnabled = AccessibilityAccess.isEnabled(this)
         while (currentCoroutineContext().isActive && !stopping) {
@@ -345,6 +394,7 @@ class MediaWatchService : Service() {
                 monoMs = SystemClock.elapsedRealtime(),
             )
             logClockChange(time)
+            rememberVerifiedClock(time)
             health = health.tickAttempt(time.wallMs)
             ListeningRepository.updateCaptureHealth(health)
 
@@ -434,6 +484,7 @@ class MediaWatchService : Service() {
             false -> events += captureGapEvent(now, active = false, reason = "source_available")
             null -> Unit
         }
+        resolvePendingRestored(time, snapshot)?.let { events += it }
         val result = tracker.onTick(
             time = time,
             snapshot = snapshot,
@@ -494,6 +545,7 @@ class MediaWatchService : Service() {
             fytMetadataAt = FytMetadataStatus.updatedAtMs,
         )
         updateNotification(result.live, reading, health)
+        ListeningRepository.updateClock(app.eventLog.unverifiedEvents)
         return if (result.live?.phase == MediaPhase.PLAYING) 500L else 1_000L
     }
 
@@ -507,6 +559,10 @@ class MediaWatchService : Service() {
         lastClockWallMs = time.wallMs
         lastClockMonoMs = time.monoMs
         if (jump == null) return
+        // Часы исправились: со следующего тика журнал снова пишется по дате, а
+        // поправка уходит в событие, чтобы отчёт пересчитал уже записанное.
+        ClockStatus.onClockChanged(time.wallMs, jump.driftMs)
+        runCatching { app.prefs.lastVerifiedWallMs = time.wallMs }
         runCatching {
             val event = LogEvent(
                 ts = time.wallMs,
@@ -515,11 +571,24 @@ class MediaWatchService : Service() {
                     "wallDelta" to jump.wallDeltaMs,
                     "monoDelta" to jump.monoDeltaMs,
                     "driftMs" to jump.driftMs,
+                    "shiftMs" to jump.driftMs,
                 ),
             )
             app.eventLog.append(event)
             ListeningRepository.record(listOf(event))
         }
+    }
+
+    /**
+     * Запоминает достоверное время для следующего запуска: по нему отличается
+     * холодный старт со сбитыми часами. Пишется не чаще раза в минуту.
+     */
+    private fun rememberVerifiedClock(time: TickTime) {
+        if (!ClockStatus.verified) return
+        ClockStatus.touchVerified(time.wallMs)
+        if (time.monoMs - lastClockPersistMonoMs < CLOCK_PERSIST_INTERVAL_MS) return
+        lastClockPersistMonoMs = time.monoMs
+        runCatching { app.prefs.lastVerifiedWallMs = time.wallMs }
     }
 
     private fun logCaptureError(time: TickTime, stage: String, error: Throwable) {
@@ -769,5 +838,8 @@ class MediaWatchService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_STOP = "com.example.carmusicmeter.action.STOP"
         private const val FINALIZE_TIMEOUT_MS = 2_000L
+
+        /** Как часто последнее достоверное время сохраняется в настройки. */
+        private const val CLOCK_PERSIST_INTERVAL_MS = 60_000L
     }
 }

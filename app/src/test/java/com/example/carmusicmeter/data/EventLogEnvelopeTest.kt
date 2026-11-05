@@ -56,4 +56,34 @@ class EventLogEnvelopeTest {
         assertNotEquals(newBootId(), newBootId())
         assertTrue(newBootId().isNotEmpty())
     }
+
+    @Test
+    fun `непроверенные часы пишут в отдельный файл без даты`() {
+        val log = EventLog(root, bootId = "b", monoClock = { 1L }, clockVerified = { false })
+
+        log.append(LogEvent(ts = ts, type = "service_started", fields = emptyMap()))
+
+        assertEquals("events-unverified.jsonl", log.unverifiedFile.name)
+        assertEquals(listOf(log.unverifiedFile), log.logsDir.listFiles()?.toList())
+        val json = JSONObject(log.unverifiedFile.readLines().single())
+        assertEquals(false, json.getBoolean("clockVerified"))
+        assertEquals("b", json.getString("bootId"))
+        assertEquals(1L, log.unverifiedEvents)
+    }
+
+    @Test
+    fun `после подтверждения часов журнал возвращается к файлу по дате`() {
+        var verified = false
+        val log = EventLog(root, bootId = "b", monoClock = { 1L }, clockVerified = { verified })
+
+        log.append(LogEvent(ts = ts, type = "before", fields = emptyMap()))
+        verified = true
+        log.append(LogEvent(ts = ts + 1_000L, type = "after", fields = emptyMap()))
+
+        assertEquals("before", JSONObject(log.unverifiedFile.readLines().single()).getString("type"))
+        val after = JSONObject(log.todayFile(ts).readLines().single())
+        assertEquals("after", after.getString("type"))
+        assertEquals(true, after.getBoolean("clockVerified"))
+        assertEquals(1L, log.unverifiedEvents)
+    }
 }

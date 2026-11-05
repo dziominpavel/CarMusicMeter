@@ -91,6 +91,50 @@ class ExportManifestTest {
         assertEquals(0L, manifest["totalBytes"])
     }
 
+    @Test
+    fun `схема манифеста поднята до второй версии`() {
+        assertEquals(2, ExportManifest.SCHEMA_VERSION)
+    }
+
+    @Test
+    fun `манифест содержит статистику журналов`() {
+        val logs = listOf(
+            ExportLogStats(
+                path = "logs/events-unverified.jsonl",
+                events = 3,
+                fromMs = 1_683_706_439_724L,
+                toMs = 1_683_706_500_000L,
+                unverified = 3,
+                clockChanged = true,
+            ),
+            ExportLogStats(
+                path = "logs/events-2026-11-05.jsonl",
+                events = 206,
+                fromMs = 1_793_859_523_984L,
+                toMs = 1_793_893_253_551L,
+            ),
+        )
+
+        val manifest = ExportManifest.build(
+            info = info,
+            files = emptyList(),
+            exportedAtMs = EXPORTED_AT_MS,
+            logs = logs,
+        )
+
+        val listed = manifest["logs"] as List<*>
+        assertEquals(2, listed.size)
+        val unverified = listed[0] as Map<*, *>
+        assertEquals("logs/events-unverified.jsonl", unverified["path"])
+        assertEquals(3, unverified["events"])
+        assertEquals(3, unverified["unverified"])
+        assertEquals(true, unverified["clockChanged"])
+        val dated = listed[1] as Map<*, *>
+        assertEquals(206, dated["events"])
+        assertEquals(0, dated["unverified"])
+        assertEquals(false, dated["clockChanged"])
+    }
+
     private companion object {
         const val EXPORTED_AT_MS = 1_793_467_800_123L
     }

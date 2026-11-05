@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import com.example.carmusicmeter.autostart.AutostartScheduler
+import com.example.carmusicmeter.data.ClockStatus
 import com.example.carmusicmeter.data.DeviceProfile
 import com.example.carmusicmeter.data.EventLog
 import com.example.carmusicmeter.data.ListeningRepository
@@ -28,8 +29,16 @@ class CarMusicMeterApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        eventLog = EventLog(filesDir, bootId = newBootId())
         prefs = Prefs(this)
+        // Часы проверяем до первого события: от этого зависит, попадёт ли
+        // строка в файл по дате или в непроверенный поток. Магнитола после
+        // потери питания стартует с датой 2023 года и синхронизируется позже.
+        ClockStatus.init(
+            nowMs = System.currentTimeMillis(),
+            buildTimeMs = AppVersion.buildTimeMs(),
+            storedLastVerifiedWallMs = prefs.lastVerifiedWallMs,
+        )
+        eventLog = EventLog(filesDir, bootId = newBootId())
         ListeningRepository.setTeyesDevice(DeviceProfile.isTeyes(Build.MANUFACTURER, Build.MODEL))
         CrashLogger.install(eventLog)
         createNotificationChannel()

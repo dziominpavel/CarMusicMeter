@@ -83,6 +83,19 @@ class Prefs(context: Context) {
         next
     }
 
+    /**
+     * Последнее достоверное время магнитолы, мс. 0 — ещё не сохраняли.
+     *
+     * Нужно, чтобы отличить первый запуск от старта после полной потери
+     * питания: во втором случае часы откатываются назад и их нельзя считать
+     * реальным временем.
+     */
+    var lastVerifiedWallMs: Long
+        get() = prefs.getLong(KEY_LAST_VERIFIED_WALL_MS, 0L)
+        set(value) {
+            prefs.edit { putLong(KEY_LAST_VERIFIED_WALL_MS, value) }
+        }
+
     private companion object {
         const val KEY_AUTO_START = "auto_start"
         const val KEY_DEVICE_ID = "device_id"
@@ -92,5 +105,6 @@ class Prefs(context: Context) {
         const val KEY_EXPORT_RANGE = "export_range"
         const val KEY_MCU_MAX_VOLUME = "mcu_max_volume"
         const val KEY_OPEN_PLAY = "open_play"
+        const val KEY_LAST_VERIFIED_WALL_MS = "last_verified_wall_ms"
     }
 }

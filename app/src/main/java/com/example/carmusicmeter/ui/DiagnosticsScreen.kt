@@ -113,6 +113,32 @@ fun DiagnosticsScreen(
             }
         }
 
+        SectionCard("Часы магнитолы") {
+            KeyValueRow(
+                label = "Состояние",
+                value = when {
+                    !state.clockVerified -> "не синхронизированы"
+                    state.clockShiftMs != 0L -> "исправлены после синхронизации"
+                    else -> "подтверждены"
+                },
+                valueColor = if (state.clockVerified) StatusOk else StatusWarn,
+            )
+            KeyValueRow(
+                "Последнее подтверждённое",
+                state.clockLastVerifiedAt?.let(::formatClock) ?: "—",
+            )
+            KeyValueRow("Непроверенных событий", state.clockUnverifiedEvents.toString())
+            if (!state.clockVerified) {
+                Text(
+                    text = "События пишутся в events-unverified.jsonl и не получат " +
+                        "дату до синхронизации: отчёт восстанавливает её по " +
+                        "clock_changed.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         SectionCard("Источники") {
             SourceRow(
                 name = "MediaSession",
