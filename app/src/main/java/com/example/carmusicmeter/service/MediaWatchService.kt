@@ -46,6 +46,7 @@ import com.example.carmusicmeter.data.OpenPlay
 import com.example.carmusicmeter.data.RestoreDecision
 import com.example.carmusicmeter.data.ServiceProcessInfo
 import com.example.carmusicmeter.data.decideRestore
+import com.example.carmusicmeter.data.shouldPersistOpenPlay
 import com.example.carmusicmeter.data.ServiceStartGate
 import com.example.carmusicmeter.data.SourcePicker
 import com.example.carmusicmeter.data.StockPlayerBridge
@@ -508,8 +509,10 @@ class MediaWatchService : Service() {
         }
 
         // Открытое прослушивание сохраняем только после того, как события легли
-        // на диск: иначе восстановление закрыло бы трек без его начала.
-        if (checkpoint != null || events.any { it.type == "track_started" }) {
+        // на диск: иначе восстановление закрыло бы трек без его начала. После
+        // track_ended сохраняем тоже — тогда закрытое прослушивание стирается и
+        // не закрывается второй раз при следующем старте службы.
+        if (shouldPersistOpenPlay(events, checkpoint)) {
             persistOpenPlay(time)
         }
 
