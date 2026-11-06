@@ -59,6 +59,9 @@ dist/
 *.jks
 *.keystore
 
+# Локальный архив выгрузок логов с магнитолы (личные данные, не в git)
+/data/
+
 # Gradle configuration cache reports (optional noise)
 build/reports/
 **/build/reports/
