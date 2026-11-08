@@ -494,5 +494,88 @@ class ReportTest(unittest.TestCase):
         self.assertAlmostEqual(120_000 / 180_000, track["listened"])
 
 
+    def test_plays_jsonl_is_read_before_raw_events(self) -> None:
+        plays = [
+            {
+                "playId": "p1",
+                "origin": "live",
+                "trackKey": "com.example.player::song::artist",
+                "package": "com.example.player",
+                "source": "media_session",
+                "title": "Song",
+                "artist": "Artist",
+                "durationMs": 180_000,
+                "startedAt": BASE,
+                "endedAt": BASE + 180_000,
+                "playedMs": 180_000,
+                "rawPlayedMs": 180_000,
+                "endPositionMs": 180_000,
+                "endReason": "completed",
+                "completed": True,
+                "clockVerified": True,
+                "volumeStart": 10,
+                "volumeEnd": 12,
+                "volumeMax": 43,
+                "volumeSource": "mcu",
+                "volumeChanges": 1,
+                "volumeStats": {
+                    "mcu": {"start": 10, "low": 10, "high": 12, "end": 12, "max": 43, "changes": 1}
+                },
+                "seekBack": 0,
+                "seekForward": 0,
+            },
+            {
+                "playId": "o1",
+                "origin": "live",
+                "trackKey": "com.example.player::song::artist",
+                "package": "com.example.player",
+                "source": "media_session",
+                "title": "Song",
+                "artist": "Artist",
+                "durationMs": 180_000,
+                "startedAt": BASE + 200_000,
+                "endedAt": BASE + 260_000,
+                "playedMs": 60_000,
+                "rawPlayedMs": 60_000,
+                "endPositionMs": 60_000,
+                "endReason": "open",
+                "completed": False,
+                "open": True,
+                "clockVerified": True,
+                "volumeStart": 10,
+                "volumeEnd": 10,
+                "volumeMax": 43,
+                "volumeSource": "mcu",
+                "volumeChanges": 0,
+                "volumeStats": {},
+                "seekBack": 0,
+                "seekForward": 0,
+            },
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "export.zip"
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr(
+                    "plays/plays.jsonl",
+                    "\n".join(json.dumps(play, ensure_ascii=False) for play in plays),
+                )
+                archive.writestr(
+                    "logs/events-2026-01-01.jsonl",
+                    json.dumps(start(BASE, "raw-only"), ensure_ascii=False) + "\n",
+                )
+            events, malformed, _, _, found = report.load_zip_full(path, verify=False)
+            metrics, _, _, _ = report.analyze(events, 10 * 60 * 1000)
+            csv_path = Path(folder) / "plays.csv"
+            report.write_plays_csv(str(csv_path), found)
+            csv_text = csv_path.read_text(encoding="utf-8-sig")
+
+        self.assertEqual(0, malformed)
+        self.assertEqual(2, len(found))
+        self.assertEqual(1, len(metrics))
+        self.assertEqual(1, metrics[0]["completed"])
+        self.assertEqual(1, metrics[0]["open"])
+        self.assertIn("playId", csv_text)
+
+
 if __name__ == "__main__":
     unittest.main()

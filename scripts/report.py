@@ -39,6 +39,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json", action="store_true", help="вывести JSON вместо таблицы")
     parser.add_argument("--json-out", metavar="FILE", help="сохранить JSON в файл (UTF-8)")
     parser.add_argument("--csv", metavar="FILE", help="сохранить метрики в CSV")
+    parser.add_argument("--plays", metavar="FILE", help="сохранить факты из ZIP в CSV")
     parser.add_argument("--no-verify", action="store_true", help="не проверять manifest.json")
     parser.add_argument("--strict", action="store_true", help="выходить с ошибкой при проблемах манифеста")
     parser.add_argument("--min-plays", type=int, default=3, help="минимум прослушиваний для кандидатов")
@@ -60,7 +61,13 @@ def read_json_file(path: Path):
 
 
 def load_zip(path: Path, verify: bool):
+    events, malformed, manifest, problems, _plays = load_zip_full(path, verify)
+    return events, malformed, manifest, problems
+
+
+def load_zip_full(path: Path, verify: bool):
     events = {}
+    plays = []
     malformed = 0
     with zipfile.ZipFile(path) as archive:
         manifest = None
@@ -71,6 +78,17 @@ def load_zip(path: Path, verify: bool):
                 manifest = None
 
         for name in sorted(archive.namelist()):
+            if name.startswith("plays/") and name.endswith(".jsonl"):
+                raw = archive.read(name).decode("utf-8", errors="replace")
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        plays.append(json.loads(line))
+                    except ValueError:
+                        malformed += 1
+                continue
             if not (name.startswith("logs/") and name.endswith(".jsonl")):
                 continue
             raw = archive.read(name).decode("utf-8", errors="replace")
@@ -86,7 +104,12 @@ def load_zip(path: Path, verify: bool):
                 events.setdefault(line, event)
 
         problems = verify_zip(archive, manifest) if verify and manifest else []
-    return list(events.values()), malformed, manifest, problems
+    if plays:
+        events = {
+            json.dumps(event, sort_keys=True, ensure_ascii=False): event
+            for event in plays_to_events(plays)
+        }
+    return list(events.values()), malformed, manifest, problems, plays
 
 
 def verify_zip(archive: zipfile.ZipFile, manifest: dict) -> list[str]:
@@ -116,9 +139,27 @@ def verify_zip(archive: zipfile.ZipFile, manifest: dict) -> list[str]:
 
 
 def load_dir(path: Path, verify: bool):
+    events, malformed, manifest, problems, _plays = load_dir_full(path, verify)
+    return events, malformed, manifest, problems
+
+
+def load_dir_full(path: Path, verify: bool):
     events = {}
+    plays = []
     malformed = 0
     manifest = read_json_file(path / "manifest.json")
+    plays_dir = path / "plays"
+    play_files = sorted(plays_dir.glob("*.jsonl")) if plays_dir.is_dir() else []
+    for play_file in play_files:
+        with play_file.open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    plays.append(json.loads(line))
+                except ValueError:
+                    malformed += 1
     logs = sorted((path / "logs").glob("*.jsonl")) if (path / "logs").is_dir() else []
     for log in logs:
         with log.open(encoding="utf-8", errors="replace") as handle:
@@ -133,7 +174,12 @@ def load_dir(path: Path, verify: bool):
                     continue
                 events.setdefault(line, event)
     problems = verify_dir(path, manifest) if verify and manifest else []
-    return list(events.values()), malformed, manifest, problems
+    if plays:
+        events = {
+            json.dumps(event, sort_keys=True, ensure_ascii=False): event
+            for event in plays_to_events(plays)
+        }
+    return list(events.values()), malformed, manifest, problems, plays
 
 
 def verify_dir(path: Path, manifest: dict) -> list[str]:
@@ -163,6 +209,7 @@ def verify_dir(path: Path, manifest: dict) -> list[str]:
 
 def load_exports(paths: list[str], verify: bool):
     events = {}
+    plays_by_id = {}
     malformed = 0
     sources = []
     manifests = []
@@ -170,9 +217,9 @@ def load_exports(paths: list[str], verify: bool):
     for raw_path in paths:
         path = Path(raw_path)
         if path.is_dir():
-            found, bad, manifest, issues = load_dir(path, verify)
+            found, bad, manifest, issues, found_plays = load_dir_full(path, verify)
         elif path.suffix.lower() == ".zip":
-            found, bad, manifest, issues = load_zip(path, verify)
+            found, bad, manifest, issues, found_plays = load_zip_full(path, verify)
         else:
             raise SystemExit(f"Не ZIP и не папка: {raw_path}")
         malformed += bad
@@ -182,14 +229,123 @@ def load_exports(paths: list[str], verify: bool):
         sources.append({
             "path": str(path),
             "events": len(found),
+            "plays": len(found_plays),
             "manifest": manifest is not None,
         })
+        for play in found_plays:
+            key = play.get("playId") or json.dumps(play, sort_keys=True, ensure_ascii=False)
+            plays_by_id.setdefault(key, play)
         for event in found:
             key = json.dumps(event, sort_keys=True, ensure_ascii=False)
             events.setdefault(key, event)
 
     ordered = order_events(list(events.values()))
-    return ordered, malformed, sources, manifests, problems
+    return ordered, malformed, sources, manifests, problems, list(plays_by_id.values())
+
+
+def plays_to_events(plays: list[dict]) -> list[dict]:
+    """Превращает готовые факты в события, которые понимает analyze().
+
+    Так отчёт читает новый ZIP без второй реализации метрик: факты уже
+    содержат playedMs, endReason и volumeStats. Синтетические seek-события
+    сохраняют счётчики перемоток.
+    """
+    events: list[dict] = []
+    for play in plays:
+        if not isinstance(play, dict):
+            continue
+        play_id = play.get("playId") or "play"
+        track_key = play.get("trackKey")
+        started_at = int(play.get("startedAt") or 0)
+        verified = play.get("clockVerified", True) is not False
+        common = {
+            "bootId": play_id,
+            "clockVerified": verified,
+            "trackKey": track_key,
+            "package": play.get("package"),
+            "source": play.get("source"),
+            "title": play.get("title"),
+            "artist": play.get("artist"),
+            "album": play.get("album"),
+            "mediaId": play.get("mediaId"),
+            "durationMs": play.get("durationMs"),
+        }
+        events.append({
+            "ts": started_at,
+            "type": "track_started",
+            "positionMs": None,
+            "volume": play.get("volumeStart"),
+            "volumeMax": play.get("volumeMax"),
+            "volumeSource": play.get("volumeSource"),
+            **common,
+        })
+        if play.get("open"):
+            events.append({
+                "ts": int(play.get("endedAt") or started_at),
+                "type": "track_progress",
+                "positionMs": play.get("endPositionMs"),
+                "playedMs": play.get("playedMs") or 0,
+                "volume": play.get("volumeEnd"),
+                "volumeMax": play.get("volumeMax"),
+                "volumeSource": play.get("volumeSource"),
+                "phase": "playing",
+                "startedAt": started_at,
+                **common,
+            })
+        else:
+            ended = {
+                "ts": int(play.get("endedAt") or started_at),
+                "type": "track_ended",
+                "playedMs": play.get("playedMs") or 0,
+                "rawPlayedMs": play.get("rawPlayedMs") or play.get("playedMs") or 0,
+                "endPositionMs": play.get("endPositionMs"),
+                "endReason": play.get("endReason") or "unknown",
+                "completed": bool(play.get("completed")),
+                "startedAt": started_at,
+                "volumeStart": play.get("volumeStart"),
+                "volumeEnd": play.get("volumeEnd"),
+                "volumeLow": play.get("volumeLow"),
+                "volumeHigh": play.get("volumeHigh"),
+                "volumeChanges": play.get("volumeChanges") or 0,
+                "volumeMax": play.get("volumeMax"),
+                "volumeSource": play.get("volumeSource"),
+                "volumeStats": play.get("volumeStats") or {},
+                **common,
+            }
+            if play.get("restored"):
+                ended["restored"] = True
+            events.append(ended)
+        for _ in range(int(play.get("seekBack") or 0)):
+            events.append({
+                "ts": started_at + 1,
+                "type": "seek",
+                "deltaMs": -1,
+                "fromMs": 1,
+                "toMs": 0,
+                **common,
+            })
+        for _ in range(int(play.get("seekForward") or 0)):
+            events.append({
+                "ts": started_at + 1,
+                "type": "seek",
+                "deltaMs": 1,
+                "fromMs": 0,
+                "toMs": 1,
+                **common,
+            })
+    return events
+
+
+def write_plays_csv(path: str, plays: list[dict]) -> None:
+    fields = [
+        "playId", "origin", "trackKey", "package", "source", "title", "artist",
+        "startedAt", "endedAt", "playedMs", "endReason", "open",
+    ]
+    with open(path, "w", newline="", encoding="utf-8-sig") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for play in plays:
+            writer.writerow({key: play.get(key) for key in fields})
 
 
 # ---------- порядок и поправка часов ----------
@@ -935,9 +1091,11 @@ def main() -> int:
         pass
 
     args = parse_args()
-    events, malformed, sources, manifests, problems = load_exports(
+    events, malformed, sources, manifests, problems, plays = load_exports(
         args.paths, verify=not args.no_verify,
     )
+    if args.plays:
+        write_plays_csv(args.plays, plays)
     exported_at = max((m.get("exportedAtMs") or 0) for m in manifests) if manifests else None
     jumps = clock_jumps(events)
     dated, undated = split_by_date(events, jumps, exported_at or None)
@@ -982,7 +1140,8 @@ def main() -> int:
             "problems": problems,
         },
         "summary": {
-            "events": len(events),
+            "events": len(plays) if plays else len(events),
+            "facts": len(plays),
             "tracks": len(metrics),
             "sessions": len(sessions),
             "played_ms": sum(track["played_ms"] or 0 for track in metrics),
@@ -1021,7 +1180,8 @@ def main() -> int:
         print(text)
     else:
         print(render_report(
-            metrics, sessions, manifests, sources, len(events), malformed,
+            metrics, sessions, manifests, sources,
+            len(plays) if plays else len(events), malformed,
             problems, position_resets, args, source_stats, gap_stats, media_stats,
             clock_stats, undated_stats,
         ))

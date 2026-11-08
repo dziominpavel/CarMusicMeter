@@ -21,6 +21,23 @@ fun formatMs(ms: Long?): String {
 fun formatClock(ts: Long): String =
     SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(ts))
 
+fun formatPercent(value: Double?): String =
+    if (value == null) "—" else (value * 100).toInt().toString() + "%"
+
+fun formatHumanDuration(ms: Long): String {
+    if (ms <= 0) return "0 мин"
+    val totalMinutes = ms / 60_000
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return if (hours > 0) "$hours ч $minutes мин" else "$minutes мин"
+}
+
+fun formatDateShort(ts: Long?): String =
+    if (ts == null) "—" else SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(Date(ts))
+
+fun formatSigned(value: Double?): String =
+    if (value == null) "—" else String.format(Locale.US, "%+.1f", value)
+
 fun formatBytes(bytes: Long): String = when {
     bytes >= 1024L * 1024L -> "%.1f МБ".format(Locale.US, bytes / 1024.0 / 1024.0)
     bytes >= 1024L -> "%.0f КБ".format(Locale.US, bytes / 1024.0)

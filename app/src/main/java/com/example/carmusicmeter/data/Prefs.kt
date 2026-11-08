@@ -2,6 +2,7 @@ package com.example.carmusicmeter.data
 
 import android.content.Context
 import androidx.core.content.edit
+import com.example.carmusicmeter.data.metrics.ReportPeriod
 import java.util.UUID
 
 class Prefs(context: Context) {
@@ -33,6 +34,13 @@ class Prefs(context: Context) {
         get() = ExportRange.fromTag(prefs.getString(KEY_EXPORT_RANGE, null))
         set(value) {
             prefs.edit { putString(KEY_EXPORT_RANGE, value.tag) }
+        }
+
+    /** Период экрана отчёта; по умолчанию 7 дней. */
+    var reportPeriod: ReportPeriod
+        get() = ReportPeriod.fromTag(prefs.getString(KEY_REPORT_PERIOD, null))
+        set(value) {
+            prefs.edit { putString(KEY_REPORT_PERIOD, value.tag) }
         }
 
     /** Верхняя граница шкалы MCU Teyes CC3; 0 — не показывать максимум. */
@@ -76,6 +84,15 @@ class Prefs(context: Context) {
             }
         }
 
+    /** Время первого live-факта: до него история дня может быть derived. */
+    var liveSince: Long?
+        get() = prefs.getLong(KEY_LIVE_SINCE, 0L).takeIf { it > 0L }
+        set(value) {
+            prefs.edit {
+                if (value == null) remove(KEY_LIVE_SINCE) else putLong(KEY_LIVE_SINCE, value)
+            }
+        }
+
     /** Номер выгрузки: увеличивается при каждом старте экспорта. */
     fun nextExportSeq(): Long = synchronized(this) {
         val next = prefs.getLong(KEY_EXPORT_SEQ, 0L) + 1
@@ -103,8 +120,10 @@ class Prefs(context: Context) {
         const val KEY_RETENTION_DAYS = "retention_days"
         const val KEY_MAX_BYTES = "max_bytes"
         const val KEY_EXPORT_RANGE = "export_range"
+        const val KEY_REPORT_PERIOD = "report_period"
         const val KEY_MCU_MAX_VOLUME = "mcu_max_volume"
         const val KEY_OPEN_PLAY = "open_play"
         const val KEY_LAST_VERIFIED_WALL_MS = "last_verified_wall_ms"
+        const val KEY_LIVE_SINCE = "live_since"
     }
 }

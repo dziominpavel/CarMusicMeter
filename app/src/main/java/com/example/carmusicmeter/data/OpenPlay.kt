@@ -42,6 +42,9 @@ data class OpenPlay(
     val volumeChanges: Int,
     val volumeSource: String,
     val volumeStats: Map<String, OpenPlayVolume> = emptyMap(),
+    val playId: String = "",
+    val seekBack: Int = 0,
+    val seekForward: Int = 0,
 ) {
     fun toJson(): String = JSONObject().apply {
         put("bootId", bootId)
@@ -64,6 +67,9 @@ data class OpenPlay(
         put("volumeMax", volumeMax)
         put("volumeChanges", volumeChanges)
         put("volumeSource", volumeSource)
+        put("playId", playId)
+        put("seekBack", seekBack)
+        put("seekForward", seekForward)
         put(
             "volumeStats",
             JSONObject().apply {
@@ -111,6 +117,9 @@ data class OpenPlay(
                     volumeMax = json.optInt("volumeMax", 0),
                     volumeChanges = json.optInt("volumeChanges", 0),
                     volumeSource = json.optStringOrNull("volumeSource").orEmpty(),
+                    playId = json.optStringOrNull("playId").orEmpty(),
+                    seekBack = json.optInt("seekBack", 0),
+                    seekForward = json.optInt("seekForward", 0),
                     volumeStats = json.optJSONObject("volumeStats")?.let { stats ->
                         stats.keys().asSequence().associateWith { key ->
                             val item = stats.getJSONObject(key)

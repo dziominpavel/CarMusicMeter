@@ -31,12 +31,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.carmusicmeter.data.LiveState
 import com.example.carmusicmeter.data.MediaPhase
+import com.example.carmusicmeter.data.PlayFactsDiagnostics
 import com.example.carmusicmeter.ui.theme.StatusOk
 import com.example.carmusicmeter.ui.theme.StatusWarn
 
 @Composable
 fun DiagnosticsScreen(
     state: LiveState,
+    playFacts: PlayFactsDiagnostics,
     onBack: () -> Unit,
     onStartService: () -> Unit,
     onStopService: () -> Unit,
@@ -111,6 +113,16 @@ fun DiagnosticsScreen(
                     Text("Запустить службу")
                 }
             }
+        }
+
+        SectionCard("Факты прослушиваний") {
+            KeyValueRow("Live", playFacts.live.toString())
+            KeyValueRow("History", playFacts.history.toString())
+            KeyValueRow("Дней в кэше", playFacts.cacheDays.toString())
+            KeyValueRow("Версия builder'а", playFacts.builderVersion.toString())
+            KeyValueRow("Открытых", playFacts.open.toString())
+            KeyValueRow("Пересечений", playFacts.overlaps.toString())
+            KeyValueRow("Ошибок разбора", playFacts.errors.toString())
         }
 
         SectionCard("Часы магнитолы") {

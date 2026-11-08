@@ -19,6 +19,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +38,14 @@ import com.example.carmusicmeter.data.ExportInfo
 import com.example.carmusicmeter.data.ExportPlan
 import com.example.carmusicmeter.data.ExportRange
 import com.example.carmusicmeter.data.ExportStorage
+import com.example.carmusicmeter.data.PlayExport
+import com.example.carmusicmeter.data.PlayFactsDiagnostics
+import com.example.carmusicmeter.data.PlaySource
+import com.example.carmusicmeter.data.ReportExporter
+import com.example.carmusicmeter.data.ReportRepository
+import com.example.carmusicmeter.data.ReportUiState
+import com.example.carmusicmeter.data.metrics.MetricsEngine
+import com.example.carmusicmeter.data.metrics.toReportPeriod
 import com.example.carmusicmeter.data.ListeningRepository
 import com.example.carmusicmeter.data.NotificationListenerStatus
 import com.example.carmusicmeter.data.Prefs
@@ -57,8 +66,12 @@ import com.example.carmusicmeter.ui.ExportDialog
 import com.example.carmusicmeter.ui.ExportProgressDialog
 import com.example.carmusicmeter.ui.ExportResult
 import com.example.carmusicmeter.ui.ExportResultDialog
+import com.example.carmusicmeter.ui.AllTracksScreen
 import com.example.carmusicmeter.ui.DashboardScreen
 import com.example.carmusicmeter.ui.DiagnosticsScreen
+import com.example.carmusicmeter.ui.QualityScreen
+import com.example.carmusicmeter.ui.ReportScreen
+import com.example.carmusicmeter.ui.TrackDetailScreen
 import com.example.carmusicmeter.ui.LaunchSplash
 import com.example.carmusicmeter.ui.SettingsScreen
 import com.example.carmusicmeter.ui.theme.CarMusicMeterTheme
@@ -71,6 +84,10 @@ import java.util.Locale
 
 private enum class AppScreen {
     DASHBOARD,
+    REPORT,
+    TRACK_DETAIL,
+    QUALITY,
+    ALL_TRACKS,
     DIAGNOSTICS,
     SETTINGS,
 }
@@ -78,6 +95,7 @@ private enum class AppScreen {
 class MainActivity : ComponentActivity() {
 
     private lateinit var prefs: Prefs
+    private lateinit var reportRepository: ReportRepository
     private val exportResult = mutableStateOf<ExportResult?>(null)
     private val exportBusy = mutableStateOf(false)
     private val storageStats = mutableStateOf<StorageStats?>(null)
@@ -92,6 +110,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         prefs = (application as CarMusicMeterApp).prefs
+        reportRepository = ReportRepository(
+            baseDir = filesDir,
+            deviceId = prefs.deviceId,
+            appVersion = AppVersion.name(this),
+            liveSince = { prefs.liveSince },
+            scope = lifecycleScope,
+        )
         if (prefs.autoStart && !ListeningRepository.state.value.serviceRunning) {
             runCatching {
                 WatchServiceController.start(this, StartSource.APP_OPEN)
@@ -101,6 +126,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             CarMusicMeterTheme {
                 val state by ListeningRepository.state.collectAsState()
+                val reportState by reportRepository.state.collectAsState()
                 val app = application as CarMusicMeterApp
                 val busy by exportBusy
                 val stats = storageStats.value
@@ -114,9 +140,44 @@ class MainActivity : ComponentActivity() {
                 var pendingRetentionDays by remember { mutableStateOf<Int?>(null) }
                 var screenName by rememberSaveable { mutableStateOf(AppScreen.DASHBOARD.name) }
                 var splashVisible by remember { mutableStateOf(LaunchSplashGate.shouldShow()) }
+                var playFacts by remember { mutableStateOf(PlayFactsDiagnostics()) }
+                var reportPeriod by remember { mutableStateOf(prefs.reportPeriod) }
+                var selectedTrackKey by remember { mutableStateOf<String?>(null) }
 
                 BackHandler(enabled = screenName != AppScreen.DASHBOARD.name) {
-                    screenName = AppScreen.DASHBOARD.name
+                    screenName = when (AppScreen.valueOf(screenName)) {
+                        AppScreen.TRACK_DETAIL,
+                        AppScreen.QUALITY,
+                        AppScreen.ALL_TRACKS,
+                        -> AppScreen.REPORT.name
+
+                        else -> AppScreen.DASHBOARD.name
+                    }
+                }
+
+                LaunchedEffect(screenName) {
+                    if (screenName == AppScreen.DIAGNOSTICS.name) {
+                        playFacts = withContext(Dispatchers.IO) {
+                            PlaySource(
+                                baseDir = filesDir,
+                                deviceId = prefs.deviceId,
+                                appVersion = AppVersion.name(this@MainActivity),
+                                liveSince = prefs.liveSince,
+                            ).diagnostics()
+                        }
+                    }
+                }
+
+                LaunchedEffect(screenName, reportPeriod) {
+                    val reportScreen = screenName == AppScreen.REPORT.name ||
+                        screenName == AppScreen.TRACK_DETAIL.name ||
+                        screenName == AppScreen.QUALITY.name ||
+                        screenName == AppScreen.ALL_TRACKS.name
+                    if (reportScreen &&
+                        (screenName == AppScreen.REPORT.name || reportState !is ReportUiState.Ready)
+                    ) {
+                        reportRepository.load(reportPeriod)
+                    }
                 }
 
                 val applyRetention: (Int) -> Unit = { days ->
@@ -209,6 +270,30 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 val onExport: () -> Unit = { showExportDialog = true }
+                val onOpenReport: () -> Unit = { screenName = AppScreen.REPORT.name }
+                val reportScreen: @Composable () -> Unit = {
+                    ReportScreen(
+                        state = reportState,
+                        period = reportPeriod,
+                        onPeriodChange = { period ->
+                            reportPeriod = period
+                            prefs.reportPeriod = period
+                        },
+                        onBack = { screenName = AppScreen.DASHBOARD.name },
+                        onRetry = { reportRepository.retry() },
+                        onTrackClick = { key ->
+                            selectedTrackKey = key
+                            screenName = AppScreen.TRACK_DETAIL.name
+                        },
+                        onQualityClick = { screenName = AppScreen.QUALITY.name },
+                        onAllTracks = { screenName = AppScreen.ALL_TRACKS.name },
+                        onExport = onExport,
+                    )
+                }
+                val reportHint = (reportState as? ReportUiState.Ready)?.let {
+                    "В отчёте сейчас: " + it.model.tracks.size + " треков, " +
+                        it.model.summary.plays + " прослушиваний"
+                } ?: "В ZIP также попадут факты и отчёт"
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     when (AppScreen.valueOf(screenName)) {
@@ -216,13 +301,58 @@ class MainActivity : ComponentActivity() {
                             state = state,
                             onOpenDiagnostics = { screenName = AppScreen.DIAGNOSTICS.name },
                             onOpenSettings = { screenName = AppScreen.SETTINGS.name },
+                            onOpenReport = onOpenReport,
                             onStartService = onStartService,
                             onOpenNotificationAccess = onOpenNotificationAccess,
                             onExport = onExport,
                         )
 
+                        AppScreen.REPORT -> reportScreen()
+
+                        AppScreen.TRACK_DETAIL -> {
+                            val ready = reportState as? ReportUiState.Ready
+                            if (ready == null) {
+                                reportScreen()
+                            } else {
+                                TrackDetailScreen(
+                                    model = ready.model,
+                                    trackKey = selectedTrackKey,
+                                    onBack = { screenName = AppScreen.REPORT.name },
+                                )
+                            }
+                        }
+
+                        AppScreen.QUALITY -> {
+                            val ready = reportState as? ReportUiState.Ready
+                            if (ready == null) {
+                                reportScreen()
+                            } else {
+                                QualityScreen(
+                                    model = ready.model,
+                                    onBack = { screenName = AppScreen.REPORT.name },
+                                )
+                            }
+                        }
+
+                        AppScreen.ALL_TRACKS -> {
+                            val ready = reportState as? ReportUiState.Ready
+                            if (ready == null) {
+                                reportScreen()
+                            } else {
+                                AllTracksScreen(
+                                    model = ready.model,
+                                    onBack = { screenName = AppScreen.REPORT.name },
+                                    onTrackClick = { key ->
+                                        selectedTrackKey = key
+                                        screenName = AppScreen.TRACK_DETAIL.name
+                                    },
+                                )
+                            }
+                        }
+
                         AppScreen.DIAGNOSTICS -> DiagnosticsScreen(
                             state = state,
+                            playFacts = playFacts,
                             onBack = { screenName = AppScreen.DASHBOARD.name },
                             onStartService = onStartService,
                             onStopService = onStopService,
@@ -328,6 +458,7 @@ class MainActivity : ComponentActivity() {
                         range = exportRange,
                         plan = exportPlan,
                         freshSnapshot = exportSnapshotTaken,
+                        reportHint = reportHint,
                         onRangeChange = { range ->
                             if (range != exportRange) {
                                 exportRange = range
@@ -478,11 +609,30 @@ class MainActivity : ComponentActivity() {
 
     private fun exportTo(uri: Uri, plan: ExportPlan): Int {
         val app = application as CarMusicMeterApp
+        val source = PlaySource(
+            baseDir = filesDir,
+            deviceId = app.prefs.deviceId,
+            appVersion = AppVersion.name(this),
+            liveSince = app.prefs.liveSince,
+        )
+        val facts = source.load(plan.requestedFromMs, plan.requestedToMs)
+        val bundle = PlayExport.build(facts, plan.range)
+        val now = System.currentTimeMillis()
+        val model = MetricsEngine.compute(
+            plays = facts,
+            period = plan.range.toReportPeriod(),
+            captureGaps = source.captureGaps(plan.requestedFromMs, plan.requestedToMs),
+            nowMs = now,
+        )
+        val report = ReportExporter.build(model)
         return app.eventLog.exportTo(
             resolver = contentResolver,
             uri = uri,
             info = exportInfo(),
             plan = plan,
+            generated = bundle.generated + report.generated,
+            plays = bundle.stats,
+            report = report.stats,
         )
     }
 

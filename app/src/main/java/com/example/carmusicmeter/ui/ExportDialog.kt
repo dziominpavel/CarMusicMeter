@@ -22,6 +22,7 @@ fun ExportDialog(
     range: ExportRange,
     plan: ExportPlan?,
     freshSnapshot: Boolean,
+    reportHint: String? = null,
     onRangeChange: (ExportRange) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
@@ -76,6 +77,13 @@ fun ExportDialog(
                 if (plan != null && !plan.isEmpty) {
                     Text(
                         text = breakdown(plan),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                reportHint?.let {
+                    Text(
+                        text = it,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

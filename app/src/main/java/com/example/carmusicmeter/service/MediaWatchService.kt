@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.example.carmusicmeter.AppVersion
 import com.example.carmusicmeter.MainActivity
 import com.example.carmusicmeter.R
 import com.example.carmusicmeter.CarMusicMeterApp
@@ -43,6 +44,7 @@ import com.example.carmusicmeter.data.MediaPhase
 import com.example.carmusicmeter.data.MediaSnapshot
 import com.example.carmusicmeter.data.NoSourceGapTracker
 import com.example.carmusicmeter.data.OpenPlay
+import com.example.carmusicmeter.data.PlayRecord
 import com.example.carmusicmeter.data.RestoreDecision
 import com.example.carmusicmeter.data.ServiceProcessInfo
 import com.example.carmusicmeter.data.decideRestore
@@ -306,7 +308,7 @@ class MediaWatchService : Service() {
             val time = TickTime(System.currentTimeMillis(), SystemClock.elapsedRealtime())
             val events = tracker.finish(time, "service_stopped")
             if (events.isNotEmpty()) {
-                app.eventLog.appendAll(events)
+                appendEvents(events)
                 ListeningRepository.record(events)
             }
         }.onFailure { error ->
@@ -316,11 +318,43 @@ class MediaWatchService : Service() {
         // Прослушивание закрыто (или запись уже недоступна): сохранение больше
         // не нужно, иначе следующая служба закроет его второй раз.
         runCatching { app.prefs.openPlay = null }
+        runCatching { app.eventLog.writeOpenPlay(null) }
+    }
+
+    /** Пишет события и, если среди них закрытие трека, готовый факт. */
+    private fun appendEvents(events: List<LogEvent>) {
+        if (events.isEmpty()) return
+        val verified = ClockStatus.verified
+        val appVersion = AppVersion.name(this)
+        val plays = events.mapNotNull { event ->
+            PlayRecord.fromTrackEnded(
+                event = event,
+                bootId = app.eventLog.bootId,
+                deviceId = app.prefs.deviceId,
+                appVersion = appVersion,
+                clockVerified = verified,
+            )
+        }
+        app.eventLog.appendBatch(events, plays)
+        if (plays.isNotEmpty() && app.prefs.liveSince == null) {
+            app.prefs.liveSince = System.currentTimeMillis()
+        }
     }
 
     private fun persistOpenPlay(time: TickTime) {
         runCatching {
-            app.prefs.openPlay = tracker.openPlay(app.eventLog.bootId, time)
+            val open = tracker.openPlay(app.eventLog.bootId, time)
+            app.prefs.openPlay = open
+            app.eventLog.writeOpenPlay(
+                open?.let {
+                    PlayRecord.fromOpenPlay(
+                        open = it,
+                        deviceId = app.prefs.deviceId,
+                        appVersion = AppVersion.name(this),
+                        clockVerified = ClockStatus.verified,
+                    )
+                },
+            )
         }.onFailure { error ->
             health = health.failure("open_play: ${error.message ?: error.javaClass.simpleName}")
             ListeningRepository.updateCaptureHealth(health)
@@ -378,6 +412,7 @@ class MediaWatchService : Service() {
         return runCatching {
             val event = tracker.closeRestored(pending, time)
             app.prefs.openPlay = null
+            app.eventLog.writeOpenPlay(null)
             event
         }.onFailure { error ->
             health = health.failure("restore_play: ${error.message ?: error.javaClass.simpleName}")
@@ -501,7 +536,7 @@ class MediaWatchService : Service() {
 
         if (events.isNotEmpty()) {
             try {
-                CaptureWrite.append(events) { app.eventLog.appendAll(it) }
+                CaptureWrite.append(events) { appendEvents(it) }
                 ListeningRepository.record(events)
             } catch (error: CaptureWriteException) {
                 throw CaptureFailure("append", error.droppedEvents, error.cause ?: error)

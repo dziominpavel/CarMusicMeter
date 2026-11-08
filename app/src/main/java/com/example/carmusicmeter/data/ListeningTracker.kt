@@ -1,5 +1,6 @@
 package com.example.carmusicmeter.data
 
+import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -26,6 +27,9 @@ class ListeningTracker {
 
     private data class Active(
         val key: String,
+        val playId: String,
+        var seekBack: Int,
+        var seekForward: Int,
         var snapshot: MediaSnapshot,
         val startedAtWallMs: Long,
         var playedMs: Long,
@@ -299,6 +303,7 @@ class ListeningTracker {
                             "deltaMs" to delta,
                         ),
                     )
+                    if (delta < 0) current.seekBack += 1 else current.seekForward += 1
                 }
                 current.lastPositionMs = reported
                 current.lastPositionMonoMs = time.monoMs
@@ -378,6 +383,9 @@ class ListeningTracker {
             volumeMax = current.volumeMax,
             volumeChanges = current.volumeChanges,
             volumeSource = lastVolumeSource ?: "audio",
+            playId = current.playId,
+            seekBack = current.seekBack,
+            seekForward = current.seekForward,
             volumeStats = current.volumeStats.mapValues { (_, segment) ->
                 OpenPlayVolume(
                     start = segment.start,
@@ -445,6 +453,11 @@ class ListeningTracker {
         val merged = snapshot?.let { preserveSameTrackFields(saved, it) } ?: saved
         return Active(
             key = open.trackKey,
+            playId = open.playId.ifBlank {
+                PlayRecord.syntheticId(open.bootId, open.startedAtWallMs, open.trackKey)
+            },
+            seekBack = open.seekBack,
+            seekForward = open.seekForward,
             snapshot = merged,
             startedAtWallMs = open.startedAtWallMs,
             playedMs = open.playedMs,
@@ -509,6 +522,9 @@ class ListeningTracker {
         )
         return Active(
             key = snapshot.trackKey,
+            playId = UUID.randomUUID().toString(),
+            seekBack = 0,
+            seekForward = 0,
             snapshot = snapshot,
             startedAtWallMs = time.wallMs,
             playedMs = 0L,
@@ -643,6 +659,7 @@ class ListeningTracker {
         type = "track_started",
         fields = linkedMapOf(
             "trackKey" to active.key,
+            "playId" to active.playId,
             "package" to active.snapshot.packageName,
             "sessionTag" to active.snapshot.sessionTag,
             "source" to active.snapshot.source,
@@ -672,6 +689,7 @@ class ListeningTracker {
         type = "track_progress",
         fields = linkedMapOf(
             "trackKey" to active.key,
+            "playId" to active.playId,
             "package" to active.snapshot.packageName,
             "source" to active.snapshot.source,
             "title" to active.snapshot.title,
@@ -725,6 +743,9 @@ class ListeningTracker {
             type = "track_ended",
             fields = linkedMapOf<String, Any?>(
                 "trackKey" to active.key,
+                "playId" to active.playId,
+                "seekBack" to active.seekBack,
+                "seekForward" to active.seekForward,
                 "package" to active.snapshot.packageName,
                 "source" to active.snapshot.source,
                 "title" to active.snapshot.title,

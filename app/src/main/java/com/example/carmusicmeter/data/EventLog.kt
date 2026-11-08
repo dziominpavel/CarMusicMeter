@@ -28,7 +28,7 @@ import java.util.zip.ZipOutputStream
  * упорядочить события и восстановить даты, если часы магнитолы сбились.
  */
 class EventLog(
-    baseDir: File,
+    private val baseDir: File,
     /** Идентификатор процесса: новый при каждом старте процесса. */
     val bootId: String = newBootId(),
     /**
@@ -45,6 +45,8 @@ class EventLog(
 
     val logsDir = File(baseDir, "logs").apply { mkdirs() }
     val snapshotsDir = File(baseDir, "snapshots").apply { mkdirs() }
+    val playsDir = File(baseDir, "plays").apply { mkdirs() }
+    val reportDir = File(baseDir, "report").apply { mkdirs() }
 
     /** Сколько событий записано с непроверенным временем в этом процессе. */
     private val unverifiedCount = AtomicLong(0)
@@ -64,6 +66,52 @@ class EventLog(
         if (verified) todayFile(ts) else unverifiedFile
 
     fun append(event: LogEvent) = appendAll(listOf(event))
+
+    /**
+     * Закрытие прослушивания: событие и факт пишутся в одной операции.
+     * Файлы разные, поэтому fsync у каждого свой; недостающий факт
+     * восстанавливается из события при разборе истории.
+     */
+    fun appendClose(event: LogEvent, play: PlayRecord) = appendBatch(listOf(event), listOf(play))
+
+    fun appendBatch(events: List<LogEvent>, plays: List<PlayRecord> = emptyList()) {
+        if (events.isNotEmpty()) appendAll(events)
+        if (plays.isNotEmpty()) appendPlays(plays)
+    }
+
+    fun appendPlays(plays: List<PlayRecord>) {
+        if (plays.isEmpty()) return
+        synchronized(this) {
+            plays.groupBy(::playFileFor).forEach { (file, items) ->
+                FileOutputStream(file, true).use { out ->
+                    items.forEach { play ->
+                        out.write((play.toJsonLine() + "\n").toByteArray(Charsets.UTF_8))
+                    }
+                    out.flush()
+                    out.fd.sync()
+                }
+            }
+        }
+    }
+
+    fun playFileFor(play: PlayRecord): File =
+        if (play.clockVerified) {
+            File(playsDir, "plays-${dayStamp(play.startedAt)}.jsonl")
+        } else {
+            File(playsDir, "plays-unverified.jsonl")
+        }
+
+    /** Открытый факт для отчёта; `null` удаляет файл. */
+    fun writeOpenPlay(play: PlayRecord?) {
+        val file = File(playsDir, OPEN_PLAY_NAME)
+        synchronized(this) {
+            if (play == null) {
+                file.delete()
+            } else {
+                file.writeText(play.toJsonLine(), Charsets.UTF_8)
+            }
+        }
+    }
 
     fun appendAll(events: List<LogEvent>) {
         if (events.isEmpty()) return
@@ -115,6 +163,8 @@ class EventLog(
         val logs = scanLogs()
         val snapshots = scanSnapshots()
         val crashes = scanCrashes()
+        val plays = playsDir.listFiles()?.filter { it.isFile }.orEmpty()
+        val cache = PlayCache.cacheDir(baseDir).listFiles()?.filter { it.isFile }.orEmpty()
         return StorageStats(
             oldestLogDate = logs.mapNotNull { it.date }.minOrNull(),
             logFiles = logs.size,
@@ -123,6 +173,10 @@ class EventLog(
             snapshotBytes = snapshots.sumOf { it.size },
             crashFiles = crashes.size,
             crashBytes = crashes.sumOf { it.size },
+            playFiles = plays.size,
+            playBytes = plays.sumOf { it.length() },
+            cacheFiles = cache.size,
+            cacheBytes = cache.sumOf { it.length() },
         )
     }
 
@@ -147,7 +201,31 @@ class EventLog(
     ): RetentionPlan {
         val plan = planTrim(policy, nowMs)
         val deleted = plan.all.filter { it.file.delete() }
-        if (deleted.isNotEmpty()) {
+
+        var deletedPlays = 0
+        var deletedPlayBytes = 0L
+        var deletedCache = 0
+        var deletedCacheBytes = 0L
+        plan.logs.mapNotNull { it.date }.distinct().forEach { day ->
+            val play = File(playsDir, "plays-$day.jsonl")
+            if (play.exists()) {
+                val size = play.length()
+                if (play.delete()) {
+                    deletedPlays += 1
+                    deletedPlayBytes += size
+                }
+            }
+            val cache = File(PlayCache.cacheDir(baseDir), "plays-$day.jsonl")
+            if (cache.exists()) {
+                val size = cache.length()
+                if (cache.delete()) {
+                    deletedCache += 1
+                    deletedCacheBytes += size
+                }
+            }
+        }
+
+        if (deleted.isNotEmpty() || deletedPlays > 0 || deletedCache > 0) {
             val reasons = plan.reasons().joinToString("+").ifBlank { "policy" }
             val deletedFiles = deleted.mapTo(HashSet()) { it.file }
             runCatching {
@@ -156,11 +234,13 @@ class EventLog(
                         ts = nowMs,
                         type = "retention_trimmed",
                         fields = linkedMapOf(
-                            "files" to deleted.size,
-                            "bytes" to deleted.sumOf { it.size },
+                            "files" to (deleted.size + deletedPlays + deletedCache),
+                            "bytes" to (deleted.sumOf { it.size } + deletedPlayBytes + deletedCacheBytes),
                             "logs" to plan.logs.count { it.file in deletedFiles },
                             "snapshots" to plan.snapshots.count { it.file in deletedFiles },
                             "crashes" to plan.crashes.count { it.file in deletedFiles },
+                            "plays" to deletedPlays,
+                            "cache" to deletedCache,
                             "reason" to reasons,
                         ),
                     ),
@@ -192,9 +272,12 @@ class EventLog(
         info: ExportInfo,
         plan: ExportPlan,
         exportedAtMs: Long = System.currentTimeMillis(),
+        generated: List<ExportGenerated> = emptyList(),
+        plays: ExportPlaysStats? = null,
+        report: ExportReportStats? = null,
     ): Int {
-        if (plan.files.isEmpty()) error("нет данных за период")
-        val entries = ArrayList<ExportFile>(plan.files.size)
+        if (plan.files.isEmpty() && generated.isEmpty()) error("нет данных за период")
+        val entries = ArrayList<ExportFile>(plan.files.size + generated.size)
         val logStats = ArrayList<ExportLogStats>()
         val stream = resolver.openOutputStream(uri)
             ?: error("не удалось открыть поток для записи")
@@ -223,6 +306,17 @@ class EventLog(
                         logStats += ExportLogScanner.scanFile(path, file)
                     }
                 }
+                generated.forEach { entry ->
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    zip.putNextEntry(ZipEntry(entry.path))
+                    zip.write(entry.bytes)
+                    zip.closeEntry()
+                    entries += ExportFile(
+                        path = entry.path,
+                        size = entry.bytes.size.toLong(),
+                        sha256 = digest.digest(entry.bytes).toHex(),
+                    )
+                }
                 val manifest = Json.objectFrom(
                     ExportManifest.build(
                         info = info,
@@ -231,6 +325,8 @@ class EventLog(
                         range = plan.rangeInfo(),
                         coverage = exportCoverage(logStats, plan.coverage()),
                         logs = logStats,
+                        plays = plays,
+                        report = report,
                     ),
                 )
                 zip.putNextEntry(ZipEntry("manifest.json"))
@@ -238,7 +334,7 @@ class EventLog(
                 zip.closeEntry()
             }
         }
-        return plan.files.size
+        return entries.size
     }
 
     private fun scanLogs(): List<StoredFile> =
@@ -292,6 +388,7 @@ class EventLog(
          * попадать ни в имя файла, ни в `coverage` выгрузки.
          */
         const val UNVERIFIED_LOG_NAME = "events-unverified.jsonl"
+        const val OPEN_PLAY_NAME = "open.json"
     }
 }
 

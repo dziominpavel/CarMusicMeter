@@ -47,9 +47,13 @@ data class StorageStats(
     val snapshotBytes: Long = 0,
     val crashFiles: Int = 0,
     val crashBytes: Long = 0,
+    val playFiles: Int = 0,
+    val playBytes: Long = 0,
+    val cacheFiles: Int = 0,
+    val cacheBytes: Long = 0,
 ) {
-    val totalBytes: Long get() = logBytes + snapshotBytes + crashBytes
-    val totalFiles: Int get() = logFiles + snapshotFiles + crashFiles
+    val totalBytes: Long get() = logBytes + snapshotBytes + crashBytes + playBytes + cacheBytes
+    val totalFiles: Int get() = logFiles + snapshotFiles + crashFiles + playFiles + cacheFiles
 }
 
 data class RetentionPlan(

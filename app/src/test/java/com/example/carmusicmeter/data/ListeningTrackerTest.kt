@@ -691,4 +691,32 @@ class ListeningTrackerTest {
         assertEquals(1, mcu["changes"])
         assertEquals(43, mcu["max"])
     }
+
+    @Test
+    fun `playId переживает восстановление прослушивания`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 10, 30)
+        val open = tracker.openPlay("boot1", t(10_000))!!
+
+        val restored = ListeningTracker().closeRestored(open, t(0))
+
+        assertTrue(open.playId.isNotBlank())
+        assertEquals(open.playId, restored.fields["playId"])
+    }
+
+    @Test
+    fun `перемотки считаются и попадают в факт`() {
+        val tracker = ListeningTracker()
+        val started = tracker.onTick(t(0), snap("A", 0), 10, 30).events
+            .single { it.type == "track_started" }
+        tracker.onTick(t(10_000), snap("A", 10_000), 10, 30)
+        tracker.onTick(t(11_000), snap("A", 1_000), 10, 30)
+        tracker.onTick(t(12_000), snap("A", 20_000), 10, 30)
+        val ended = tracker.onTick(t(13_000), snap("B", 0), 10, 30).events
+            .single { it.type == "track_ended" }
+
+        assertEquals(started.fields["playId"], ended.fields["playId"])
+        assertEquals(1, ended.fields["seekBack"])
+        assertEquals(1, ended.fields["seekForward"])
+    }
 }

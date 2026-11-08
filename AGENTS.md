@@ -8,19 +8,22 @@ OpenSpec-скиллы: `.cursor/skills/`, `.devin/skills/`, `.opencode/skills/`,
 
 Android-приложение на **Kotlin** для сбора статистики прослушиваний в автомобиле.
 Работает поверх **штатного плеера** магнитолы Teyes CC3 (Android 10): читает
-MediaSession и медиа-уведомления, опрашивает громкость, пишет события в JSONL.
-Коллекция (~3000 треков) лежит на USB-флешке и на ПК; анализ и отчёты — на ПК.
+MediaSession и медиа-уведомления, опрашивает громкость, пишет события в JSONL
+и готовые факты прослушиваний в `plays/`.
+Коллекция (~3000 треков) лежит на USB-флешке и на ПК; базовый отчёт — в
+приложении, глубокий анализ и индекс коллекции — на ПК.
 
 Текущий этап — **v0 «пробник»**: выяснить, что отдаёт штатный плеер Teyes,
 и собрать первые реальные данные. Это ещё не финальное приложение.
 
 ### Стек
 
-- **UI:** Jetpack Compose, Material 3, только тёмная тема (экран в машине)
-- **Данные:** append-only JSONL с fsync; Room появится в v1, когда события начнут
-  матчиться с индексом библиотеки
+- **UI:** Jetpack Compose, Material 3, только тёмная тема (экран в машине);
+  экран отчёта и деталей трека
+- **Данные:** append-only JSONL с fsync, факты `plays` и производный кэш истории;
+  Room появится в v1, когда события начнут матчиться с индексом библиотеки
 - **Архитектура:** один модуль `:app`; `MediaWatchService` (foreground) + `NotificationWatchService`;
-  `ListeningTracker` — чистая логика без Android, покрыта JVM-тестами
+  `ListeningTracker` и `MetricsEngine` — чистая логика без Android, покрыта JVM-тестами
 - **Версия:** файл `version`, меняет только release-скрипт; автобампа нет
 
 ### Ключевые пути
@@ -30,10 +33,14 @@ MediaSession и медиа-уведомления, опрашивает гром
 - `service/MediaWatchService.kt` — цикл опроса, foreground-служба, уведомление
 - `service/NotificationWatchService.kt` — доступ к уведомлениям и резервный источник
 - `data/ListeningTracker.kt` — старт/конец трека, пропуск, пауза, перемотка
-- `data/EventLog.kt` — JSONL, fsync, ZIP-экспорт, снимки
+- `data/PlayRecord.kt`, `data/PlayBuilder.kt`, `data/PlaySource.kt` — факты,
+  разбор истории, слияние live + history
+- `data/metrics/`, `data/ReportRepository.kt` — метрики и фоновый расчёт отчёта
+- `ui/ReportScreen.kt`, `ui/TrackDetailScreen.kt`, `ui/QualityScreen.kt` — отчёт
+- `data/EventLog.kt` — JSONL, fsync, факты, ZIP-экспорт, снимки
 - `probe/MediaSessionProbe.kt` — чтение MediaSession и полный дамп
 - `diagnostics/SnapshotWriter.kt` — снимок окружения и всех сессий
-- `openspec/specs/` — `playback-capture`, `volume-tracking`, `event-log`
+- `openspec/specs/` — `playback-capture`, `volume-tracking`, `event-log`, `play-facts`
 
 ### Сборка APK (единственный путь)
 
@@ -81,6 +88,10 @@ MediaSession и медиа-уведомления, опрашивает гром
   дублей, диапазон считается сам.
 - Флешка нужна только чтобы принести **новый** ZIP: каждая выгрузка содержит
   всю историю, поэтому старые дни после импорта уже на ПК.
+- ZIP содержит `plays/plays.jsonl`, `plays/plays.csv`, `DATA_DICTIONARY.csv`,
+  `SCHEMA.md`, `tracks.csv`, `report.html` и `ai-prompt.md`; `report.py` читает
+  факты первыми, raw — fallback. Факты — единственная копия прослушиваний,
+  кэш истории производный и пересобираемый.
 
 ## Секреты
 
@@ -91,7 +102,8 @@ MediaSession и медиа-уведомления, опрашивает гром
 ## Перед изменениями
 
 1. Сверяйся со спеками: `openspec/specs/playback-capture/spec.md`,
-   `openspec/specs/volume-tracking/spec.md`, `openspec/specs/event-log/spec.md`.
+   `openspec/specs/volume-tracking/spec.md`, `openspec/specs/event-log/spec.md`,
+   `openspec/specs/play-facts/spec.md`.
 2. Новые фичи — через OpenSpec change (`/opsx-propose` → review → `/opsx-apply` → `/opsx-archive`).
 3. Не меняй `minSdk` без причины: 29 — это Android 10 магнитолы.
 4. Не добавляй разрешения «на всякий случай»: уведомления, foreground-служба,
@@ -99,14 +111,17 @@ MediaSession и медиа-уведомления, опрашивает гром
 
 ## Приоритеты при доработках
 
+- **Факты прослушиваний:** закрытие трека пишет событие и факт; недостающий
+  факт восстанавливается из события, дубль схлопывается по `playId`. Кэш
+  истории производный и может быть удалён.
 - **Надёжность записи:** событие либо на диске с fsync, либо его нет. Буферы
   в памяти теряются при выключении зажигания.
 - **Не мешать штатному плееру:** никаких запросов аудиофокуса, никакого
   воспроизведения, никаких изменений громкости.
 - **Офлайн:** всё локально, без сети и облака.
 - **Экран в машине:** крупные кнопки, тёмная тема, читаемость с водительского места.
-- **Дешёвый цикл:** нельзя гонять тяжёлый анализ на магнитоле; индекс библиотеки
-  и отчёты считаются на ПК.
+- **Дешёвый цикл:** лёгкая агрегация по `plays` — на устройстве; индекс
+  библиотеки, LUFS, матчинг и глубокие отчёты — на ПК.
 
 ## OpenSpec (spec-driven development)
 

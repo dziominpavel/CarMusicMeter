@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+**Добавлено**
+- Приложение показывает отчёт по прослушиваниям: сводка, топ и антитоп, качество данных, детали трека.
+- В ZIP добавлены tracks.csv, report.html и ai-prompt.md для анализа на ПК и с ИИ.
+
+### Добавлено
+- `in-app-report`: `MetricsEngine` по фактам, `ReportRepository`, экраны отчёта, `tracks.csv`/`report.html`/`ai-prompt.md`, блок `report` в манифесте.
+
 ## [0.1.0] — 2026-11-06 (MINOR)
 
 **Добавлено**

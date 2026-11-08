@@ -30,6 +30,35 @@ data class ExportFile(
     val sha256: String,
 )
 
+/** Артефакт, сгенерированный приложением и записанный в ZIP без файла на диске. */
+data class ExportGenerated(
+    val path: String,
+    val bytes: ByteArray,
+)
+
+/** Сводка фактов прослушиваний для `manifest.json`. */
+data class ExportPlaysStats(
+    val total: Int,
+    val live: Int,
+    val history: Int,
+    val open: Int,
+    val rated: Int,
+    val censored: Int,
+    val fromMs: Long?,
+    val toMs: Long?,
+    val playsSchemaVersion: Int = PlayRecord.SCHEMA_VERSION,
+)
+
+/** Сводка отчёта для `manifest.json`. */
+data class ExportReportStats(
+    val period: String,
+    val days: Int?,
+    val tracks: Int,
+    val plays: Int,
+    val generatedAtMs: Long,
+    val version: Int = 1,
+)
+
 object ExportManifest {
 
     /** Версия формата manifest.json; меняется только при несовместимых правках полей. */
@@ -42,6 +71,8 @@ object ExportManifest {
         range: ExportRangeInfo? = null,
         coverage: ExportCoverage? = null,
         logs: List<ExportLogStats> = emptyList(),
+        plays: ExportPlaysStats? = null,
+        report: ExportReportStats? = null,
     ): Map<String, Any?> {
         val manifest = linkedMapOf<String, Any?>(
             "kind" to "carmusicmeter-export",
@@ -84,6 +115,30 @@ object ExportManifest {
                     "clockChanged" to log.clockChanged,
                 )
             }
+        }
+        if (plays != null) {
+            manifest["plays"] = linkedMapOf(
+                "playsSchemaVersion" to plays.playsSchemaVersion,
+                "total" to plays.total,
+                "live" to plays.live,
+                "history" to plays.history,
+                "open" to plays.open,
+                "rated" to plays.rated,
+                "censored" to plays.censored,
+                "fromMs" to plays.fromMs,
+                "toMs" to plays.toMs,
+            )
+        }
+        if (report != null) {
+            manifest["report"] = linkedMapOf(
+                "period" to report.period,
+                "days" to report.days,
+                "tracks" to report.tracks,
+                "plays" to report.plays,
+                "generatedAt" to isoTime(report.generatedAtMs),
+                "generatedAtMs" to report.generatedAtMs,
+                "version" to report.version,
+            )
         }
         manifest["files"] = files.map { file ->
             linkedMapOf(
