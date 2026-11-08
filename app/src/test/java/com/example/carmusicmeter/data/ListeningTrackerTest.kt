@@ -693,6 +693,25 @@ class ListeningTrackerTest {
     }
 
     @Test
+    fun `агрегаты громкости копят шаги, уровень и места изменений`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(0), snap("A", 0), 25, 43, source = "mcu")
+        tracker.onVolume(t(10_000), 17, 43, source = "mcu")
+        tracker.onVolume(t(20_000), 22, 43, source = "mcu")
+        val ended = tracker.onTick(t(30_000), snap("B", 0), 22, 43, source = "mcu").events
+            .single { it.type == "track_ended" }
+
+        @Suppress("UNCHECKED_CAST")
+        val stats = ended.fields["volumeStats"] as Map<String, Map<String, Any?>>
+        val mcu = stats.getValue("mcu")
+        assertEquals(5, mcu["up"])
+        assertEquals(8, mcu["down"])
+        assertEquals(22, mcu["level"])
+        assertEquals(10_000L, mcu["dropMs"])
+        assertEquals(20_000L, mcu["raiseMs"])
+    }
+
+    @Test
     fun `playId переживает восстановление прослушивания`() {
         val tracker = ListeningTracker()
         tracker.onTick(t(0), snap("A", 0), 10, 30)

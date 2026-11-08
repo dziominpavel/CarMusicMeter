@@ -32,8 +32,10 @@ object MetricsEngine {
         val unverified = closedAll.size - dated.size
         val open = plays.filter { it.open }
 
+        val calibration = TrackAffinity.calibrate(dated)
+        val tripMedians = TrackAffinity.tripMedians(dated)
         val tracks = dated.groupBy { it.trackKey }.map { (key, items) ->
-            track(key, items)
+            track(key, items, calibration, tripMedians)
         }.sortedWith(
             compareByDescending<TrackMetrics> { it.plays }.thenByDescending { it.playedMs },
         )
@@ -81,9 +83,14 @@ object MetricsEngine {
             .take(5)
         val candidates = tracks.filter { it.isCandidate() }
             .sortedWith(
-                compareByDescending<TrackMetrics> { it.skipRate ?: 0.0 }
+                compareBy<TrackMetrics> { it.affinity ?: 100 }
                     .thenByDescending { it.ratedPlays },
             )
+        val rankedTracks = tracks.sortedWith(
+            compareByDescending<TrackMetrics> { it.affinity ?: -1 }
+                .thenByDescending { it.plays }
+                .thenByDescending { it.playedMs },
+        )
 
         return ReportModel(
             period = period,
@@ -93,15 +100,22 @@ object MetricsEngine {
             summary = summary,
             quality = quality,
             tracks = tracks,
+            rankedTracks = rankedTracks,
             top = top,
             antiTop = antiTop,
             candidates = candidates,
             openPlay = open.maxByOrNull { it.endedAt },
             unverifiedCount = unverified,
+            affinityCalibrated = calibration.trained,
         )
     }
 
-    private fun track(key: String, items: List<PlayRecord>): TrackMetrics {
+    private fun track(
+        key: String,
+        items: List<PlayRecord>,
+        calibration: TrackAffinity.Calibration,
+        tripMedians: Map<String, Int>,
+    ): TrackMetrics {
         val restoredEmpty = items.count { it.restored && it.playedMs <= 0L }
         val rated = items.count { it.endReason in RATED }
         val durations = items.mapNotNull { it.durationMs?.takeIf { value -> value > 0 } }
@@ -140,6 +154,7 @@ object MetricsEngine {
         val completed = items.count { it.endReason == "completed" }
         val interrupted = items.count { it.endReason == "interrupted" }
         val latest = items.maxByOrNull { it.startedAt }
+        val affinity = TrackAffinity.score(items, calibration, tripMedians)
 
         return TrackMetrics(
             trackKey = key,
@@ -175,15 +190,24 @@ object MetricsEngine {
             days = items.map { StorageDates.dateOf(it.startedAt) }.distinct().size,
             lastPlayedAt = items.maxOfOrNull { it.startedAt },
             playsList = items.sortedByDescending { it.startedAt },
+            affinity = affinity?.score,
+            affinityConfidence = affinity?.confidence ?: 0.0,
+            affinityPlays = affinity?.plays ?: 0,
+            affinityApprox = affinity?.approximate ?: false,
+            affinityReasons = affinity?.reasons.orEmpty(),
+            volumeUpMax = affinity?.maxUp ?: 0,
         )
     }
 
-    private fun TrackMetrics.isCandidate(): Boolean =
-        ratedPlays >= TrackMetrics.MIN_RATED &&
+    private fun TrackMetrics.isCandidate(): Boolean {
+        val score = affinity ?: return false
+        return score <= 30 &&
+            ratedPlays >= TrackMetrics.MIN_RATED &&
             (durationMs ?: 0L) >= CANDIDATE_MIN_DURATION_MS &&
-            (skipRate ?: 0.0) >= 0.6 &&
-            completion != null && completion <= 0.4 &&
-            completed == 0
+            completed == 0 &&
+            volumeUpMax < 3 &&
+            days >= 2
+    }
 
     private fun trips(sorted: List<PlayRecord>): Int {
         if (sorted.isEmpty()) return 0

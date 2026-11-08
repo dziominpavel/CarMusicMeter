@@ -127,6 +127,12 @@ private fun ReportContent(
     onExport: () -> Unit,
 ) {
     ReportSummaryCard(model)
+    Text(
+        text = "Оценка трека — v1: громкость важнее времени; внизу «Все треки» — потенциально «не нравится»." +
+            if (model.affinityCalibrated) "" else " Калибровка черновая: данных мало.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     ReportQualityCard(model, onQualityClick)
     if (model.quality.unverified > 0) {
         Text(

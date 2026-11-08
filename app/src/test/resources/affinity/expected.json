@@ -1,0 +1,18 @@
+{
+ "com.p::track a::artist": {
+  "affinity": 69,
+  "plays": 2
+ },
+ "com.p::track b::artist": {
+  "affinity": 33,
+  "plays": 3
+ },
+ "com.p::track c::artist": {
+  "affinity": 56,
+  "plays": 1
+ },
+ "com.p::track d::artist": {
+  "affinity": 47,
+  "plays": 1
+ }
+}

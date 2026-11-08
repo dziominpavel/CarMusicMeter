@@ -86,14 +86,16 @@ object PlayDictionary {
         Field("volumeMax", "int", "шкала", true, "Верх шкалы; null — неизвестен"),
         Field("volumeSource", "enum", "-", true, "mcu или audio"),
         Field("volumeChanges", "int", "-", false, "Сколько раз менялась громкость"),
-        Field("volumeStats", "object", "-", false, "Сегменты громкости по источникам: start, low, high, end, max, changes"),
+        Field("volumeStats", "object", "-", false, "Сегменты громкости по источникам: start, low, high, end, max, changes, up, down, level, raiseMs, dropMs"),
         Field("seekBack", "int", "-", false, "Перемотки назад"),
         Field("seekForward", "int", "-", false, "Перемотки вперёд"),
         Field("deviceId", "string", "-", false, "Идентификатор устройства"),
         Field("appVersion", "string", "-", false, "Версия приложения"),
         Field("open", "bool", "-", false, "true — прослушивание ещё не закрыто"),
         Field("mcuStart…mcuChanges", "int", "шкала", true, "CSV: сегмент MCU (6 колонок)"),
+        Field("mcuUp…mcuDropMs", "int", "шкала/ms", true, "CSV: суммы шагов, медиана уровня, места подъёма и понижения MCU (5 колонок)"),
         Field("audioStart…audioChanges", "int", "шкала", true, "CSV: сегмент audio (6 колонок)"),
+        Field("audioUp…audioDropMs", "int", "шкала/ms", true, "CSV: те же агрегаты для audio (5 колонок)"),
     )
 
     fun csv(): String = buildString {
@@ -136,9 +138,13 @@ object PlayDictionary {
 
         ## Громкость
 
-        `volumeStats` хранит сегменты по источникам (`mcu`, `audio`).
-        Сравнивать `volumeStart/End` между разными источниками нельзя: шкалы
-        разные. `mute_changed` в журнале не подменяет громкость нулём.
+        `volumeStats` хранит сегменты по источникам (`mcu`, `audio`) и
+        агрегаты `up`/`down` (суммы шагов вверх и вниз), `level` (медиана) и
+        `raiseMs`/`dropMs` (место подъёма и понижения от начала трека).
+        Старые факты этих полей не содержат: читатель берёт `start/low/high` и
+        помечает вклад громкости как приблизительный. Сравнивать
+        `volumeStart/End` между разными источниками нельзя: шкалы разные.
+        `mute_changed` в журнале не подменяет громкость нулём.
 
         ## Окончания
 

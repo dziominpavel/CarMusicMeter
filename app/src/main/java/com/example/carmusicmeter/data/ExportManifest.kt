@@ -57,6 +57,9 @@ data class ExportReportStats(
     val plays: Int,
     val generatedAtMs: Long,
     val version: Int = 1,
+    val scoredTracks: Int = 0,
+    val volumeCoverage: Double? = null,
+    val affinityVersion: String = "v1",
 )
 
 object ExportManifest {
@@ -138,6 +141,9 @@ object ExportManifest {
                 "generatedAt" to isoTime(report.generatedAtMs),
                 "generatedAtMs" to report.generatedAtMs,
                 "version" to report.version,
+                "scoredTracks" to report.scoredTracks,
+                "volumeCoverage" to report.volumeCoverage,
+                "affinityVersion" to report.affinityVersion,
             )
         }
         manifest["files"] = files.map { file ->

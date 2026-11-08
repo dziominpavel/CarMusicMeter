@@ -10,6 +10,11 @@ data class OpenPlayVolume(
     val end: Int,
     val max: Int,
     val changes: Int,
+    val up: Int? = null,
+    val down: Int? = null,
+    val level: Int? = null,
+    val raiseMs: Long? = null,
+    val dropMs: Long? = null,
 )
 
 /**
@@ -83,6 +88,11 @@ data class OpenPlay(
                             put("end", value.end)
                             put("max", value.max)
                             put("changes", value.changes)
+                            value.up?.let { put("up", it) }
+                            value.down?.let { put("down", it) }
+                            value.level?.let { put("level", it) }
+                            value.raiseMs?.let { put("raiseMs", it) }
+                            value.dropMs?.let { put("dropMs", it) }
                         },
                     )
                 }
@@ -130,6 +140,11 @@ data class OpenPlay(
                                 end = item.optInt("end", 0),
                                 max = item.optInt("max", 0),
                                 changes = item.optInt("changes", 0),
+                                up = if (item.has("up") && !item.isNull("up")) item.optInt("up") else null,
+                                down = if (item.has("down") && !item.isNull("down")) item.optInt("down") else null,
+                                level = if (item.has("level") && !item.isNull("level")) item.optInt("level") else null,
+                                raiseMs = item.optLongOrNull("raiseMs"),
+                                dropMs = item.optLongOrNull("dropMs"),
                             )
                         }
                     }.orEmpty(),

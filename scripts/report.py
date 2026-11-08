@@ -32,6 +32,15 @@ CENSORED_REASONS = {
     "service_stopped", "session_lost", "not_played", "stopped", "unknown",
 }
 
+# Оценка симпатии, версия 1. Правила — docs/METRICS.md; зеркало Kotlin-движка.
+AFFINITY_VERSION = "v1"
+AFFINITY_PRIOR = 0.5
+AFFINITY_K = 1.5
+AFFINITY_VOLUME_WEIGHT = 0.65
+AFFINITY_TIME_WEIGHT = 0.35
+AFFINITY_MIN_PLAYS = 30
+AFFINITY_CENSORED = {"session_lost", "stopped", "unknown", "service_stopped"}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Отчёт по прослушиваниям CarMusicMeter")
@@ -551,6 +560,221 @@ def mcu_volume(event: dict, field: str):
     return value if isinstance(value, (int, float)) else None
 
 
+def _affinity_median(values):
+    return statistics.median(values) if values else 0
+
+
+def _affinity_percentile(sorted_values, fraction):
+    if not sorted_values:
+        return 0
+    index = round((len(sorted_values) - 1) * fraction)
+    return sorted_values[max(0, min(index, len(sorted_values) - 1))]
+
+
+def _affinity_plural(n, one, few, many):
+    mod100 = n % 100
+    mod10 = n % 10
+    if mod100 in range(11, 15):
+        return many
+    if mod10 == 1:
+        return one
+    if mod10 in range(2, 5):
+        return few
+    return many
+
+
+def _format_offset(ms):
+    if ms is None:
+        return None
+    total = max(0, int(ms // 1000))
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def play_volume(play):
+    """Агрегаты громкости MCU одного прослушивания.
+
+    Новые факты хранят up/down/level/raiseMs/dropMs; у старых их нет, тогда
+    берём start/low/high и помечаем вклад приблизительным.
+    """
+    start = play.get("mcu_start")
+    if start is None:
+        return None
+    low = play.get("mcu_low")
+    high = play.get("mcu_high")
+    end = play.get("mcu_end")
+    up = play.get("mcu_up")
+    down = play.get("mcu_down")
+    level = play.get("mcu_level")
+    low_value = int(low if low is not None else start)
+    high_value = int(high if high is not None else start)
+    end_value = int(end if end is not None else start)
+    approximate = up is None or down is None or level is None
+    return {
+        "start": int(start),
+        "low": low_value,
+        "high": high_value,
+        "end": end_value,
+        "up": int(up) if up is not None else max(0, high_value - int(start)),
+        "down": int(down) if down is not None else max(0, int(start) - low_value),
+        "level": int(level) if level is not None else (int(start) + end_value) // 2,
+        "raise_ms": play.get("mcu_raise_ms"),
+        "drop_ms": play.get("mcu_drop_ms"),
+        "approximate": approximate,
+    }
+
+
+def calibrate_affinity(plays):
+    volumes = [volume for volume in (play_volume(play) for play in plays) if volume]
+    if len(volumes) < AFFINITY_MIN_PLAYS:
+        return {"ceiling": 30, "habit": 15, "iqr": 10.0, "up": 5, "down": 3, "trained": False}
+    levels = sorted(volume["level"] for volume in volumes)
+    samples = sorted(
+        value for volume in volumes
+        for value in (volume["start"], volume["low"], volume["high"], volume["end"], volume["level"])
+    )
+    ups = sorted(volume["up"] for volume in volumes if volume["up"] > 0)
+    downs = sorted(volume["down"] for volume in volumes if volume["down"] > 0)
+    return {
+        "ceiling": max(1, _affinity_percentile(samples, 0.95)),
+        "habit": int(_affinity_median(levels)),
+        "iqr": max(4.0, _affinity_percentile(levels, 0.75) - _affinity_percentile(levels, 0.25)),
+        "up": int(_affinity_median(ups)) if ups else 5,
+        "down": int(_affinity_median(downs)) if downs else 3,
+        "trained": True,
+    }
+
+
+def trip_levels(plays):
+    by_session = {}
+    for play in plays:
+        volume = play_volume(play)
+        if volume:
+            by_session.setdefault(play.get("session", 0), []).append(volume["level"])
+    return {
+        session: int(_affinity_median(values))
+        for session, values in by_session.items() if values
+    }
+
+
+def play_affinity(play, calibration, trip_level):
+    reason = play.get("reason")
+    if reason == "not_played":
+        return None
+    if play.get("restored") and play.get("played", 0) <= 0:
+        return None
+    duration = play.get("duration") or 0
+    heard = min(max(play.get("played", 0) / duration, 0.0), 1.0) if duration > 0 else None
+    volume = play_volume(play)
+    if reason == "completed":
+        time_score = 1.0
+    elif reason == "interrupted":
+        time_score = 0.4
+    elif reason == "skipped" and heard is not None:
+        time_score = 0.05 + 0.75 * heard
+    elif reason in AFFINITY_CENSORED and heard is not None:
+        time_score = 0.25 + 0.5 * heard
+    else:
+        time_score = None
+    if volume is None and time_score is None:
+        return None
+    if volume is None:
+        value = 0.5
+    else:
+        headroom = max(4, calibration["ceiling"] - volume["start"])
+        up = 0.5 * min(volume["up"] / calibration["up"], 1.0) + 0.5 * min(volume["up"] / headroom, 1.0)
+        down = 0.0
+        if reason in ("skipped", "interrupted"):
+            down = (
+                0.5 * min(volume["down"] / calibration["down"], 1.0)
+                + 0.5 * min(volume["down"] / max(4, volume["start"]), 1.0)
+            )
+        habit = max(-1.0, min(1.0, (volume["level"] - calibration["habit"]) / calibration["iqr"]))
+        trip = 0.0
+        if trip_level is not None:
+            trip = max(-1.0, min(1.0, (volume["level"] - trip_level) / calibration["iqr"]))
+        state = 0.5 * habit + 0.5 * trip
+        heard_factor = 0.4 + 0.6 * (heard if heard is not None else 0.3)
+        value = max(0.0, min(1.0, 0.5 + 0.35 * up - 0.25 * down + 0.15 * state * heard_factor))
+    satisfaction = (
+        value if time_score is None
+        else AFFINITY_VOLUME_WEIGHT * value + AFFINITY_TIME_WEIGHT * time_score
+    )
+    weight = 0.6 if (time_score is None or volume is None or reason in AFFINITY_CENSORED) else 1.0
+    return {
+        "s": satisfaction,
+        "w": weight,
+        "volume": volume,
+        "heard": heard,
+        "reason": reason,
+        "played": play,
+    }
+
+
+def affinity_reasons(items):
+    reasons = []
+    with_up = [item for item in items if item["volume"] and item["volume"]["up"] >= 1]
+    if with_up:
+        best = max(with_up, key=lambda item: item["volume"]["up"])
+        offset = _format_offset(best["volume"]["raise_ms"])
+        reasons.append(
+            f"подъём +{best['volume']['up']}" + (f" на {offset}" if offset else "")
+        )
+    with_down = [
+        item for item in items
+        if item["volume"] and item["volume"]["down"] >= 3
+        and item["reason"] in ("skipped", "interrupted")
+    ]
+    if with_down:
+        best = max(with_down, key=lambda item: item["volume"]["down"])
+        offset = _format_offset(best["volume"]["drop_ms"])
+        reasons.append(
+            f"понижение −{best['volume']['down']}" + (f" на {offset}" if offset else "")
+        )
+    heard = [item["heard"] for item in items if item["heard"] is not None]
+    if heard:
+        reasons.append(f"прослушано в среднем {round(100 * sum(heard) / len(heard))}%")
+    completed = sum(1 for item in items if item["reason"] == "completed")
+    skipped = sum(1 for item in items if item["reason"] == "skipped")
+    if completed == 0 and skipped > 0:
+        reasons.append(
+            f"{skipped} {_affinity_plural(skipped, 'скип', 'скипа', 'скипов')}, ни разу не дослушан"
+        )
+    elif completed == 0:
+        reasons.append("ни разу не дослушан")
+    else:
+        reasons.append(f"дослушан {completed} {_affinity_plural(completed, 'раз', 'раза', 'раз')}")
+    if any(item["volume"] is None for item in items):
+        reasons.append("громкость известна не везде")
+    if len(items) < 2:
+        reasons.append("мало данных")
+    return reasons
+
+
+def track_affinity(plays, calibration, trip_levels_map):
+    items = []
+    for play in plays:
+        item = play_affinity(play, calibration, trip_levels_map.get(play.get("session", 0)))
+        if item:
+            items.append(item)
+    if not items:
+        return None
+    weight = sum(item["w"] for item in items)
+    total = sum(item["s"] * item["w"] for item in items)
+    score = round(100 * (total + AFFINITY_PRIOR * AFFINITY_K) / (weight + AFFINITY_K))
+    with_volume = sum(1 for item in items if item["volume"])
+    approximate = with_volume == 0 or any(
+        item["volume"] is not None and item["volume"]["approximate"] for item in items
+    )
+    return {
+        "score": int(max(0, min(100, score))),
+        "confidence": round(weight, 2),
+        "plays": len(items),
+        "approximate": approximate,
+        "max_up": max((item["volume"]["up"] for item in items if item["volume"]), default=0),
+        "reasons": affinity_reasons(items),
+    }
+
+
 def analyze(events: list[dict], session_gap_ms: int):
     # Сессии (поездки) по разрывам между событиями.
     sessions = []
@@ -658,6 +882,13 @@ def analyze(events: list[dict], session_gap_ms: int):
                 "vol_end": event.get("volumeEnd", last_volume),
                 "mcu_start": mcu_volume(event, "start"),
                 "mcu_end": mcu_volume(event, "end"),
+                "mcu_low": mcu_volume(event, "low"),
+                "mcu_high": mcu_volume(event, "high"),
+                "mcu_up": mcu_volume(event, "up"),
+                "mcu_down": mcu_volume(event, "down"),
+                "mcu_level": mcu_volume(event, "level"),
+                "mcu_raise_ms": mcu_volume(event, "raiseMs"),
+                "mcu_drop_ms": mcu_volume(event, "dropMs"),
                 "session": start.get("session", event["_session"]),
             })
 
@@ -673,6 +904,10 @@ def analyze(events: list[dict], session_gap_ms: int):
                 track["seek_back"] += 1
             else:
                 track["seek_fwd"] += 1
+
+    all_closed = [play for track in tracks.values() for play in track["plays"]]
+    calibration = calibrate_affinity(all_closed)
+    trip_levels_map = trip_levels(all_closed)
 
     metrics = []
     for track in tracks.values():
@@ -777,6 +1012,7 @@ def analyze(events: list[dict], session_gap_ms: int):
         if open_play and open_play.get("duration"):
             durations.append(open_play["duration"])
         track_duration = statistics.median(durations) if durations else None
+        affinity = track_affinity(closed, calibration, trip_levels_map)
 
         metrics.append({
             "key": track["key"],
@@ -818,6 +1054,12 @@ def analyze(events: list[dict], session_gap_ms: int):
             "seek_fwd": track["seek_fwd"],
             "days": len({date_of(start["ts"]) for start in track["starts"]}),
             "last_played": max((start["ts"] for start in track["starts"]), default=None),
+            "affinity": affinity["score"] if affinity else None,
+            "affinity_confidence": affinity["confidence"] if affinity else None,
+            "affinity_plays": affinity["plays"] if affinity else 0,
+            "affinity_approx": affinity["approximate"] if affinity else False,
+            "affinity_reasons": affinity["reasons"] if affinity else [],
+            "volume_up_max": affinity["max_up"] if affinity else 0,
         })
 
     metrics.sort(key=lambda item: (-item["plays"], -(item["played_ms"] or 0)))
@@ -896,20 +1138,24 @@ def media_button_summary(events: list[dict]) -> dict:
 
 
 def delete_candidates(metrics: list[dict], min_plays: int, min_duration: int) -> list[dict]:
+    """Кандидаты «послушать ещё» по оценке симпатии (v1): рейтинг, а не приговор."""
     candidates = []
     for track in metrics:
+        if track.get("affinity") is None or track["affinity"] > 30:
+            continue
         if track["rated_plays"] < min_plays:
             continue
         duration = track.get("duration_ms")
         if duration is not None and duration < min_duration * 1000:
             continue
-        if track["skip_rate"] is None or track["skip_rate"] < 0.6:
-            continue
-        if track["completion"] is None or track["completion"] > 0.4:
-            continue
         if track["completed"] > 0:
             continue
+        if track.get("volume_up_max", 0) >= 3:
+            continue
+        if track["days"] < 2:
+            continue
         reasons = [
+            f"оценка {track['affinity']}",
             f"{track['skipped']} из {track['rated_plays']} — скип",
             f"средний прогресс {pct(track['completion'])}",
             "ни разу не дослушан",
@@ -917,7 +1163,7 @@ def delete_candidates(metrics: list[dict], min_plays: int, min_duration: int) ->
         if track["volume_vs_trip"] is not None and track["volume_vs_trip"] < -0.5:
             reasons.append("громкость ниже обычной")
         candidates.append({**track, "reasons": reasons})
-    candidates.sort(key=lambda item: (-(item["skip_rate"] or 0), -item["rated_plays"]))
+    candidates.sort(key=lambda item: (item["affinity"], -item["rated_plays"]))
     return candidates
 
 
@@ -927,7 +1173,7 @@ def delete_candidates(metrics: list[dict], min_plays: int, min_duration: int) ->
 def render_table(metrics: list[dict], limit: int) -> str:
     shown = metrics if limit <= 0 else metrics[:limit]
     header = (
-        f"{'трек':44} {'play':>4} {'prog':>5} {'heard':>5} "
+        f"{'трек':44} {'оцен':>4} {'play':>4} {'prog':>5} {'heard':>5} "
         f"{'skip':>5} {'volΔ':>5} {'←/→':>5} {'last':>10}"
     )
     lines = [header, "-" * len(header)]
@@ -938,9 +1184,10 @@ def render_table(metrics: list[dict], limit: int) -> str:
         if len(title) > 44:
             title = title[:43] + "…"
         volume = "-" if track["volume_delta"] is None else f"{track['volume_delta']:+.0f}"
+        score = "-" if track.get("affinity") is None else str(track["affinity"])
         last = date_of(track["last_played"]) if track["last_played"] else "-"
         lines.append(
-            f"{title:44} {track['plays']:>4} {pct(track['completion']):>5} "
+            f"{title:44} {score:>4} {track['plays']:>4} {pct(track['completion']):>5} "
             f"{pct(track['listened']):>5} {pct(track['skip_rate']):>5} {volume:>5} "
             f"{track['seek_back']}/{track['seek_fwd']:<3} {last:>10}"
         )
@@ -1071,8 +1318,8 @@ def render_report(
 
     candidates = delete_candidates(metrics, args.min_plays, args.min_duration)
     lines.append(
-        f"Кандидаты на удаление (≥{args.min_plays} прослушиваний, скип ≥60%, "
-        f"завершение ≤40%, длительность ≥{args.min_duration} с):"
+        f"Кандидаты на удаление (оценка v1 ≤30, ≥{args.min_plays} прослушиваний, "
+        f"без дослушиваний и подъёмов громкости, длительность ≥{args.min_duration} с, ≥2 дней):"
     )
     if not candidates:
         lines.append("  нет — либо всё в порядке, либо данных ещё мало")
@@ -1121,12 +1368,16 @@ def main() -> int:
             "early_skip_rate", "early_skips", "avg_skip_pct", "volume_delta", "volume_vs_trip",
             "volume_known", "volume_unknown", "volume_changes", "volume_up", "volume_down",
             "seek_back", "seek_fwd", "days", "last_played",
+            "affinity", "affinity_confidence", "affinity_plays", "affinity_approx",
+            "affinity_reasons", "volume_up_max",
         ]
         with open(args.csv, "w", newline="", encoding="utf-8-sig") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()
             for track in metrics:
-                writer.writerow(track)
+                row = dict(track)
+                row["affinity_reasons"] = "; ".join(track.get("affinity_reasons") or [])
+                writer.writerow(row)
 
     payload = {
         "sources": sources,

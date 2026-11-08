@@ -12,7 +12,7 @@ import org.json.JSONObject
  */
 object PlayBuilder {
 
-    const val VERSION = 1
+    const val VERSION = 2
 
     private const val CONFIRMATION_HORIZON_MS = 365L * 24 * 60 * 60 * 1000
 
@@ -96,7 +96,7 @@ object PlayBuilder {
                 appVersion = appVersion,
                 open = false,
             )
-            plays += (trackKey to startedRaw) to play
+            plays += (trackKey to startedRaw) to applyVolume(play, rows, row, trackKey, startedAt, endedAt, jumps)
         }
 
         // Одно прослушивание — один факт. При двойном закрытии (старая сборка
@@ -178,6 +178,90 @@ object PlayBuilder {
             appVersion = appVersion,
             open = true,
         )
+    }
+
+    /**
+     * Пересобирает агрегаты громкости MCU по событиям `volume_changed`.
+     *
+     * Событие `track_ended` хранит только `start/low/high/end`, поэтому подъём
+     * после понижения по нему не восстановить. События знают каждое значение и
+     * его время, отсюда получаются суммы `up`/`down`, медиана `level` и места
+     * подъёма/понижения.
+     */
+    private fun applyVolume(
+        play: PlayRecord,
+        rows: List<Row>,
+        ended: Row,
+        trackKey: String,
+        startedAt: Long,
+        endedAt: Long,
+        jumps: Map<String, List<Jump>>,
+    ): PlayRecord {
+        val samples = rows.mapNotNull { row ->
+            if (row.type != "volume_changed") return@mapNotNull null
+            if (row.bootId != ended.bootId) return@mapNotNull null
+            if (row.json.optString("trackKey", "") != trackKey) return@mapNotNull null
+            if (row.json.optString("source", "audio") != "mcu") return@mapNotNull null
+            val ts = correctedTs(row.ts, row.mono, row.bootId, jumps)
+            if (ts < startedAt || ts > endedAt) return@mapNotNull null
+            val previous = row.json.optInt("previous", -1)
+            val value = row.json.optInt("value", -1)
+            if (value < 0) return@mapNotNull null
+            VolumeSample(ts, previous.coerceAtLeast(0), value)
+        }
+        if (samples.isEmpty()) return play
+
+        val base = play.volumeStats["mcu"]
+        val start = base?.start ?: samples.first().previous
+        val values = ArrayList<Int>(samples.size + 1)
+        values += start
+        var up = 0
+        var down = 0
+        var maxValue = start
+        var minValue = start
+        var raiseMs: Long? = null
+        var dropMs: Long? = null
+        var previous = start
+        samples.forEach { sample ->
+            val delta = sample.value - previous
+            if (delta > 0) {
+                up += delta
+                if (raiseMs == null) raiseMs = sample.ts - startedAt
+            } else if (delta < 0) {
+                down += -delta
+                if (dropMs == null) dropMs = sample.ts - startedAt
+            }
+            if (sample.value > maxValue) maxValue = sample.value
+            if (sample.value < minValue) minValue = sample.value
+            values += sample.value
+            previous = sample.value
+        }
+        val volume = PlayVolume(
+            start = start,
+            low = minOf(base?.low ?: minValue, minValue),
+            high = maxOf(base?.high ?: maxValue, maxValue),
+            end = base?.end ?: samples.last().value,
+            max = base?.max ?: 0,
+            changes = base?.changes ?: samples.size,
+            up = up,
+            down = down,
+            level = median(values),
+            raiseMs = raiseMs,
+            dropMs = dropMs,
+        )
+        return play.copy(volumeStats = play.volumeStats + ("mcu" to volume))
+    }
+
+    private data class VolumeSample(val ts: Long, val previous: Int, val value: Int)
+
+    private fun median(values: List<Int>): Int {
+        val sorted = values.sorted()
+        val middle = sorted.size / 2
+        return if (sorted.size % 2 == 0) {
+            (sorted[middle - 1] + sorted[middle]) / 2
+        } else {
+            sorted[middle]
+        }
     }
 
     private data class Row(

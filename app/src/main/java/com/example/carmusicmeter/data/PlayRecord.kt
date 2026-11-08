@@ -11,6 +11,11 @@ data class PlayVolume(
     val end: Int,
     val max: Int,
     val changes: Int,
+    val up: Int? = null,
+    val down: Int? = null,
+    val level: Int? = null,
+    val raiseMs: Long? = null,
+    val dropMs: Long? = null,
 )
 
 /**
@@ -97,6 +102,11 @@ data class PlayRecord(
                             put("end", value.end)
                             put("max", value.max)
                             put("changes", value.changes)
+                            value.up?.let { put("up", it) }
+                            value.down?.let { put("down", it) }
+                            value.level?.let { put("level", it) }
+                            value.raiseMs?.let { put("raiseMs", it) }
+                            value.dropMs?.let { put("dropMs", it) }
                         },
                     )
                 }
@@ -258,6 +268,11 @@ data class PlayRecord(
                     end = value.end,
                     max = value.max,
                     changes = value.changes,
+                    up = value.up,
+                    down = value.down,
+                    level = value.level,
+                    raiseMs = value.raiseMs,
+                    dropMs = value.dropMs,
                 )
             },
             seekBack = open.seekBack,
@@ -286,6 +301,11 @@ data class PlayRecord(
                         end = intOf(item["end"]) ?: 0,
                         max = intOf(item["max"]) ?: 0,
                         changes = intOf(item["changes"]) ?: 0,
+                        up = intOf(item["up"]),
+                        down = intOf(item["down"]),
+                        level = intOf(item["level"]),
+                        raiseMs = longOf(item["raiseMs"]),
+                        dropMs = longOf(item["dropMs"]),
                     )
                     else -> null
                 } ?: return@mapNotNull null
@@ -301,6 +321,11 @@ data class PlayRecord(
             end = json.optInt("end", 0),
             max = json.optInt("max", 0),
             changes = json.optInt("changes", 0),
+            up = json.optIntOrNull("up"),
+            down = json.optIntOrNull("down"),
+            level = json.optIntOrNull("level"),
+            raiseMs = json.optLongOrNull("raiseMs"),
+            dropMs = json.optLongOrNull("dropMs"),
         )
     }
 }
@@ -316,7 +341,9 @@ object PlayCsv {
         "volumeStart", "volumeEnd", "volumeLow", "volumeHigh", "volumeMax",
         "volumeSource", "volumeChanges",
         "mcuStart", "mcuLow", "mcuHigh", "mcuEnd", "mcuMax", "mcuChanges",
+        "mcuUp", "mcuDown", "mcuLevel", "mcuRaiseMs", "mcuDropMs",
         "audioStart", "audioLow", "audioHigh", "audioEnd", "audioMax", "audioChanges",
+        "audioUp", "audioDown", "audioLevel", "audioRaiseMs", "audioDropMs",
         "seekBack", "seekForward", "deviceId", "appVersion", "open",
     )
 
@@ -367,12 +394,22 @@ object PlayCsv {
             mcu?.end?.toString().orEmpty(),
             mcu?.max?.toString().orEmpty(),
             mcu?.changes?.toString().orEmpty(),
+            mcu?.up?.toString().orEmpty(),
+            mcu?.down?.toString().orEmpty(),
+            mcu?.level?.toString().orEmpty(),
+            mcu?.raiseMs?.toString().orEmpty(),
+            mcu?.dropMs?.toString().orEmpty(),
             audio?.start?.toString().orEmpty(),
             audio?.low?.toString().orEmpty(),
             audio?.high?.toString().orEmpty(),
             audio?.end?.toString().orEmpty(),
             audio?.max?.toString().orEmpty(),
             audio?.changes?.toString().orEmpty(),
+            audio?.up?.toString().orEmpty(),
+            audio?.down?.toString().orEmpty(),
+            audio?.level?.toString().orEmpty(),
+            audio?.raiseMs?.toString().orEmpty(),
+            audio?.dropMs?.toString().orEmpty(),
             play.seekBack.toString(),
             play.seekForward.toString(),
             play.deviceId,

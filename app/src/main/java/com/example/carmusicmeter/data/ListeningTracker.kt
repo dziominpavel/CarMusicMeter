@@ -23,6 +23,11 @@ class ListeningTracker {
         var end: Int,
         var max: Int,
         var changes: Int,
+        var up: Int = 0,
+        var down: Int = 0,
+        var raiseMs: Long? = null,
+        var dropMs: Long? = null,
+        val values: MutableList<Int> = mutableListOf(),
     )
 
     private data class Active(
@@ -105,7 +110,7 @@ class ListeningTracker {
 
         val current = active
         if (volumeChanged) {
-            current?.let { recordVolumeChange(it, source, volume, volumeMax) }
+            current?.let { recordVolumeChange(it, source, volume, volumeMax, time.wallMs) }
         }
 
         val events = mutableListOf<LogEvent>()
@@ -394,6 +399,11 @@ class ListeningTracker {
                     end = segment.end,
                     max = segment.max,
                     changes = segment.changes,
+                    up = segment.up,
+                    down = segment.down,
+                    level = medianOf(segment.values),
+                    raiseMs = segment.raiseMs,
+                    dropMs = segment.dropMs,
                 )
             },
         )
@@ -480,6 +490,15 @@ class ListeningTracker {
                     end = value.end,
                     max = value.max,
                     changes = value.changes,
+                    up = value.up ?: 0,
+                    down = value.down ?: 0,
+                    raiseMs = value.raiseMs,
+                    dropMs = value.dropMs,
+                    values = mutableListOf(
+                        value.start,
+                        value.level ?: value.start,
+                        value.end,
+                    ),
                 )
             },
             lastCheckpointMonoMs = time.monoMs,
@@ -519,6 +538,7 @@ class ListeningTracker {
             end = volume,
             max = volumeMax,
             changes = 0,
+            values = mutableListOf(volume),
         )
         return Active(
             key = snapshot.trackKey,
@@ -562,13 +582,17 @@ class ListeningTracker {
                 end = volume,
                 max = volumeMax,
                 changes = 0,
+                values = mutableListOf(volume),
             )
         } else {
             // Источник вернулся: сохраняем его прежний диапазон и число изменений.
+            // Скачок между источниками — не действие владельца, поэтому up/down
+            // не растут; для медианы уровня значение всё же учитываем.
             segment.end = volume
             segment.low = minOf(segment.low, volume)
             segment.high = maxOf(segment.high, volume)
             segment.max = volumeMax
+            segment.values += volume
         }
         val current = active.volumeStats.getValue(source)
         active.volumeStart = current.start
@@ -578,15 +602,34 @@ class ListeningTracker {
         active.volumeMax = volumeMax
     }
 
-    private fun recordVolumeChange(active: Active, source: String, volume: Int, volumeMax: Int) {
+    private fun recordVolumeChange(
+        active: Active,
+        source: String,
+        volume: Int,
+        volumeMax: Int,
+        wallMs: Long,
+    ) {
+        val offset = (wallMs - active.startedAtWallMs).coerceAtLeast(0L)
         val segment = active.volumeStats.getOrPut(source) {
-            VolumeSegment(volume, volume, volume, volume, volumeMax, 0)
+            VolumeSegment(
+                volume, volume, volume, volume, volumeMax, 0,
+                values = mutableListOf(volume),
+            )
+        }
+        val delta = volume - segment.end
+        if (delta > 0) {
+            segment.up += delta
+            if (segment.raiseMs == null) segment.raiseMs = offset
+        } else if (delta < 0) {
+            segment.down += -delta
+            if (segment.dropMs == null) segment.dropMs = offset
         }
         segment.end = volume
         segment.low = minOf(segment.low, volume)
         segment.high = maxOf(segment.high, volume)
         segment.max = volumeMax
         segment.changes += 1
+        segment.values += volume
         active.volumeStart = segment.start
         active.volumeLow = segment.low
         active.volumeHigh = segment.high
@@ -774,6 +817,11 @@ class ListeningTracker {
                         "end" to segment.end,
                         "max" to segment.max.takeIf { it > 0 },
                         "changes" to segment.changes,
+                        "up" to segment.up,
+                        "down" to segment.down,
+                        "level" to medianOf(segment.values),
+                        "raiseMs" to segment.raiseMs,
+                        "dropMs" to segment.dropMs,
                     )
                 },
                 "nextPackage" to next?.packageName,
@@ -829,5 +877,17 @@ class ListeningTracker {
 
         /** Как часто писать контрольную точку активного трека. */
         const val CHECKPOINT_INTERVAL_MS = 60_000L
+    }
+}
+
+/** Медиана значений громкости за прослушивание (уровень). */
+private fun medianOf(values: List<Int>): Int {
+    if (values.isEmpty()) return 0
+    val sorted = values.sorted()
+    val middle = sorted.size / 2
+    return if (sorted.size % 2 == 0) {
+        (sorted[middle - 1] + sorted[middle]) / 2
+    } else {
+        sorted[middle]
     }
 }

@@ -23,6 +23,8 @@ class ExportManifestReportTest {
             tracks = 3,
             plays = 9,
             generatedAtMs = 1_000L,
+            scoredTracks = 2,
+            volumeCoverage = 0.9,
         )
 
         val manifest = ExportManifest.build(
@@ -38,5 +40,8 @@ class ExportManifestReportTest {
         assertEquals(3, block["tracks"])
         assertEquals(9, block["plays"])
         assertEquals(1_000L, block["generatedAtMs"])
+        assertEquals(2, block["scoredTracks"])
+        assertEquals(0.9, block["volumeCoverage"])
+        assertEquals("v1", block["affinityVersion"])
     }
 }

@@ -34,11 +34,14 @@ class PlayExportTest {
             .bytes.toString(Charsets.UTF_8)
         assertTrue(csv.startsWith("\uFEFFplaysSchemaVersion"))
         assertTrue(csv.contains("mcuStart"))
+        assertTrue(csv.contains("mcuUp"))
+        assertTrue(csv.contains("mcuLevel"))
 
         val dictionary = bundle.generated.first { it.path == "DATA_DICTIONARY.csv" }
             .bytes.toString(Charsets.UTF_8)
         assertTrue(dictionary.contains("playId"))
         assertTrue(dictionary.contains("durationMs"))
+        assertTrue(dictionary.contains("up, down, level"))
 
         val schema = bundle.generated.first { it.path == "SCHEMA.md" }
             .bytes.toString(Charsets.UTF_8)

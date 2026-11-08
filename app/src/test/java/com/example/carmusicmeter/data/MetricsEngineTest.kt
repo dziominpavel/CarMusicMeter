@@ -3,6 +3,7 @@ package com.example.carmusicmeter.data
 import com.example.carmusicmeter.data.metrics.MetricsEngine
 import com.example.carmusicmeter.data.metrics.ReportPeriod
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -42,8 +43,7 @@ class MetricsEngineTest {
         assertEquals(1, model.summary.trips)
         assertEquals("a", model.top.first().trackKey)
         assertEquals("c", model.antiTop.first().trackKey)
-        assertEquals(1, model.candidates.size)
-        assertEquals("c", model.candidates.single().trackKey)
+        assertEquals(0, model.candidates.size)
         assertEquals(1, model.quality.open)
         assertEquals(1, model.quality.unverified)
         assertEquals(2, model.quality.captureGaps)
@@ -71,6 +71,9 @@ class MetricsEngineTest {
         duration: Long = 180_000L,
         verified: Boolean = true,
         open: Boolean = false,
+        up: Int = 2,
+        down: Int = 0,
+        level: Int = 11,
     ): PlayRecord {
         val started = now - minutesAgo * 60_000L
         return playRecord(
@@ -86,6 +89,57 @@ class MetricsEngineTest {
             endPositionMs = played,
             clockVerified = verified,
             open = open,
+        ).copy(
+            volumeStats = mapOf(
+                "mcu" to PlayVolume(10, 10, 12, 12, 43, 1, up = up, down = down, level = level),
+            ),
         )
+    }
+
+    @Test
+    fun `рейтинг ставит низкую оценку вниз, треки без оценки — последними`() {
+        val plays = listOf(
+            play("good", "completed", 180_000, 10, up = 5, level = 20),
+            play("bad", "skipped", 6_000, 20, up = 0, down = 10, level = 8),
+            play("empty", "not_played", 600, 30, up = 0, down = 0),
+        )
+
+        val model = MetricsEngine.compute(plays, ReportPeriod.DAYS_7, 0, now)
+
+        assertEquals(listOf("good", "bad", "empty"), model.rankedTracks.map { it.trackKey })
+        assertNotNull(model.track("good")?.affinity)
+        assertNotNull(model.track("bad")?.affinity)
+        assertNull(model.track("empty")?.affinity)
+    }
+
+    @Test
+    fun `кандидат требует низкой оценки, двух дней и отсутствия подъёмов`() {
+        fun low(daysAgo: Long, up: Int): PlayRecord = play(
+            track = "candidate",
+            reason = "skipped",
+            played = 6_000,
+            minutesAgo = daysAgo * 1_440,
+            duration = 120_000,
+            up = up,
+            down = 10,
+            level = 8,
+        )
+
+        val model = MetricsEngine.compute(
+            plays = listOf(low(1, 0), low(2, 0), low(3, 0)),
+            period = ReportPeriod.DAYS_7,
+            nowMs = now,
+        )
+
+        assertEquals(1, model.candidates.size)
+        assertEquals("candidate", model.candidates.single().trackKey)
+        assertTrue((model.candidates.single().affinity ?: 100) <= 30)
+
+        val withRaise = MetricsEngine.compute(
+            plays = listOf(low(1, 0), low(2, 0), low(3, 4)),
+            period = ReportPeriod.DAYS_7,
+            nowMs = now,
+        )
+        assertEquals(0, withRaise.candidates.size)
     }
 }

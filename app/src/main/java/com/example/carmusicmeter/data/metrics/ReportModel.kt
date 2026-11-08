@@ -48,14 +48,21 @@ data class TrackMetrics(
     val days: Int,
     val lastPlayedAt: Long?,
     val playsList: List<PlayRecord>,
+    val affinity: Int?,
+    val affinityConfidence: Double,
+    val affinityPlays: Int,
+    val affinityApprox: Boolean,
+    val affinityReasons: List<String>,
+    val volumeUpMax: Int,
 ) {
     val displayTitle: String get() = title.ifBlank { "(без названия)" }
     val enoughData: Boolean get() = ratedPlays >= MIN_RATED
 
     val antiTopReason: String?
         get() {
-            if (!enoughData) return null
+            if (affinity == null) return null
             val reasons = buildList {
+                add("оценка " + affinity)
                 if (skipped > 0) add("" + skipped + " из " + ratedPlays + " — скип")
                 completion?.let { add("в среднем " + (it * 100).toInt() + "%") }
                 if (completed == 0) add("ни разу не дослушан")
@@ -99,11 +106,13 @@ data class ReportModel(
     val summary: ReportSummary,
     val quality: QualitySummary,
     val tracks: List<TrackMetrics>,
+    val rankedTracks: List<TrackMetrics>,
     val top: List<TrackMetrics>,
     val antiTop: List<TrackMetrics>,
     val candidates: List<TrackMetrics>,
     val openPlay: PlayRecord?,
     val unverifiedCount: Int,
+    val affinityCalibrated: Boolean,
 ) {
     fun track(trackKey: String?): TrackMetrics? =
         trackKey?.let { key -> tracks.firstOrNull { it.trackKey == key } }

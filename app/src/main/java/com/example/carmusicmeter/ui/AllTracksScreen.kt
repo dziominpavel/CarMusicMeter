@@ -38,7 +38,13 @@ fun AllTracksScreen(
                 .padding(horizontal = 18.dp, vertical = 16.dp),
         ) {
             ScreenHeader(title = "Все треки", onBack = onBack)
-            if (model.tracks.isEmpty()) {
+            Text(
+                text = "Оценка — v1: громкость и время. Внизу списка — потенциально «не нравится».",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
+            )
+            if (model.rankedTracks.isEmpty()) {
                 Text(
                     text = "За этот период нет треков.",
                     style = MaterialTheme.typography.bodyMedium,
@@ -50,10 +56,11 @@ fun AllTracksScreen(
                     contentPadding = PaddingValues(vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    items(items = model.tracks, key = { it.trackKey }) { track ->
+                    items(items = model.rankedTracks, key = { it.trackKey }) { track ->
                         ReportTrackRow(
                             track = track,
-                            metric = track.plays.toString() + " · " + formatPercent(track.skipRate),
+                            metric = track.affinity?.toString() ?: "—",
+                            caption = if (track.affinity == null) null else "v1",
                             onClick = { onTrackClick(track.trackKey) },
                         )
                     }

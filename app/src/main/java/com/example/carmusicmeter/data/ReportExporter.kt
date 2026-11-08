@@ -25,6 +25,8 @@ object ReportExporter {
             tracks = model.tracks.size,
             plays = model.summary.plays,
             generatedAtMs = model.generatedAt,
+            scoredTracks = model.tracks.count { it.affinity != null },
+            volumeCoverage = model.quality.mcuCoverage,
         )
         return Bundle(
             generated = listOf(
@@ -43,6 +45,8 @@ object ReportExporter {
         "completion", "listened", "skip_rate", "early_skip_rate", "avg_skip_pct",
         "duration_ms", "volume_delta", "volume_known", "volume_unknown",
         "volume_changes", "seek_back", "seek_fwd", "days", "last_played",
+        "affinity", "affinity_confidence", "affinity_plays", "affinity_approx",
+        "affinity_reasons",
     )
 
     fun csv(model: ReportModel): String = buildString {
@@ -62,6 +66,11 @@ object ReportExporter {
                 track.volumeUnknown.toString(), track.volumeChanges.toString(),
                 track.seekBack.toString(), track.seekForward.toString(), track.days.toString(),
                 track.lastPlayedAt?.toString().orEmpty(),
+                track.affinity?.toString().orEmpty(),
+                if (track.affinity == null) "" else String.format(Locale.US, "%.2f", track.affinityConfidence),
+                track.affinityPlays.toString(),
+                track.affinityApprox.toString(),
+                track.affinityReasons.joinToString("; "),
             )
             append(row.joinToString(",") { escapeCsv(it) })
             append("\r\n")
@@ -114,7 +123,10 @@ object ReportExporter {
         if (model.quality.open > 0) append(" · открытых ").append(model.quality.open)
         if (model.quality.restored > 0) append(" · восстановленных ").append(model.quality.restored)
         if (model.quality.unverified > 0) append(" · непроверенных ").append(model.quality.unverified)
-        append("<div class=\"small muted\">Прочерк — данных нет; это не ноль.</div></div>")
+        append("<div class=\"small muted\">Прочерк — данных нет; это не ноль.</div>")
+        append("<div class=\"small muted\">Оценка — v1: громкость важнее времени, прочерк — нет данных")
+        if (!model.affinityCalibrated) append("; калибровка черновая, данных мало")
+        append(".</div></div>")
 
         if (model.openPlay != null) {
             append("<p class=\"small muted\">Сейчас играет: ")
@@ -129,6 +141,7 @@ object ReportExporter {
 
         append("<h2>Все треки</h2>")
         append("<table><thead><tr><th>Трек</th><th class=\"num\">Play</th>")
+        append("<th class=\"num\">Оценка v1</th>")
         append("<th class=\"num\">Completion</th><th class=\"num\">Скип</th>")
         append("<th class=\"num\">Громкость</th><th class=\"num\">Последний</th></tr></thead><tbody>")
         model.tracks.forEach { track ->
@@ -138,6 +151,7 @@ object ReportExporter {
             }
             append("</td>")
             append("<td class=\"num\">").append(track.plays).append("</td>")
+            append("<td class=\"num\">").append(track.affinity?.toString() ?: "—").append("</td>")
             append("<td class=\"num\">").append(pct(track.completion)).append("</td>")
             append("<td class=\"num\">").append(pct(track.skipRate)).append("</td>")
             append("<td class=\"num\">").append(volume(track.volumeDelta)).append("</td>")
@@ -191,7 +205,8 @@ object ReportExporter {
         append("- Используй только числа из этого файла; не выдумывай статистику.\n")
         append("- Если данных мало, скажи это прямо.\n")
         append("- not_played и unknown — технические окончания, не скипы.\n")
-        append("- Громкость — шумный сигнал: дорога, окно, пассажиры.\n")
+        append("- Громкость — главный сигнал симпатии: подъём важнее понижения, понижение на стоянке не в счёт.\n")
+        append("- Оценка трека — v1 (0–100, громкость и время); прочерк — нет данных.\n")
         append("- Пиши по-русски, 300–600 слов.\n\n")
         append("## Сводка\n\n")
         append("- Прослушано: ").append(duration(model.summary.playedMs)).append("\n")
@@ -216,14 +231,16 @@ object ReportExporter {
             append(index + 1).append(". ").append(track.displayTitle)
             track.artist?.takeIf { it.isNotBlank() }?.let { append(" — ").append(it) }
             append(": ").append(track.plays).append(" play, completion ")
-            append(pct(track.completion)).append(", скипов ").append(pct(track.skipRate)).append("\n")
+            append(pct(track.completion)).append(", скипов ").append(pct(track.skipRate))
+            append(", оценка ").append(track.affinity?.toString() ?: "—").append("\n")
         }
         append("\n## Пропускал чаще\n\n")
         model.antiTop.forEachIndexed { index, track ->
             append(index + 1).append(". ").append(track.displayTitle)
             track.artist?.takeIf { it.isNotBlank() }?.let { append(" — ").append(it) }
             append(": скипов ").append(pct(track.skipRate))
-            append(", completion ").append(pct(track.completion)).append("\n")
+            append(", completion ").append(pct(track.completion))
+            append(", оценка ").append(track.affinity?.toString() ?: "—").append("\n")
         }
         if (model.candidates.isNotEmpty()) {
             append("\n## Кандидаты «послушать ещё»\n\n")

@@ -127,6 +127,7 @@ fun ReportTrackRow(
     track: TrackMetrics,
     metric: String,
     onClick: () -> Unit,
+    caption: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -156,11 +157,20 @@ fun ReportTrackRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            text = metric,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = metric,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (caption != null) {
+                Text(
+                    text = caption,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

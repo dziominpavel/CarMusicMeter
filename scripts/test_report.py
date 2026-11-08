@@ -576,6 +576,26 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(1, metrics[0]["open"])
         self.assertIn("playId", csv_text)
 
+    def test_affinity_fixture_matches_expected(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        plays = [
+            json.loads(line)
+            for line in (root / "app/src/test/resources/affinity/plays.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+        expected = json.loads(
+            (root / "app/src/test/resources/affinity/expected.json").read_text(encoding="utf-8")
+        )
+        events = report.plays_to_events(plays)
+        events.sort(key=lambda event: (event.get("ts", 0), 0 if event["type"] == "track_started" else 1))
+        metrics, _, _, _ = report.analyze(events, 10 * 60 * 1000)
+        by_key = {track["key"]: track for track in metrics}
+        for key, item in expected.items():
+            self.assertEqual(item["affinity"], by_key[key]["affinity"], key)
+            self.assertEqual(item["plays"], by_key[key]["affinity_plays"], key)
+
 
 if __name__ == "__main__":
     unittest.main()

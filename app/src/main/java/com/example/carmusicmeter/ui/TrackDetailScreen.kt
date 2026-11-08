@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.carmusicmeter.data.PlayRecord
@@ -75,6 +76,63 @@ fun TrackDetailScreen(
                     SummaryValue("Completion", formatPercent(track.completion), Modifier.weight(1f))
                     SummaryValue("Скипов", formatPercent(track.skipRate), Modifier.weight(1f))
                     SummaryValue("Прослушано", formatHumanDuration(track.playedMs), Modifier.weight(1f))
+                }
+            }
+
+            SectionCard("Оценка симпатии (v1)") {
+                val score = track.affinity
+                if (score == null) {
+                    Text(
+                        text = "Пока нет данных для оценки: нужны закрытые прослушивания.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = score.toString(),
+                            style = MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Column {
+                            Text(
+                                text = "из 100 · версия 1",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = if (track.affinityPlays < 3) {
+                                    "Мало данных: " + track.affinityPlays + " пр."
+                                } else {
+                                    "По " + track.affinityPlays + " прослушиваниям"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    if (track.affinityApprox) {
+                        Text(
+                            text = "Громкость учтена приблизительно: часть фактов без новых полей.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    track.affinityReasons.forEach { reason ->
+                        Text(
+                            text = "• " + reason,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    Text(
+                        text = "Оценка — гипотеза (v1), а не приговор: удаление остаётся ручным.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
 

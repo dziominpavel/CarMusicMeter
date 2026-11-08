@@ -34,9 +34,13 @@ class ReportExporterTest {
         assertEquals(setOf("tracks.csv", "report.html", "ai-prompt.md"), paths)
         assertEquals(1, bundle.stats.tracks)
         assertEquals(1, bundle.stats.plays)
+        assertEquals(1, bundle.stats.scoredTracks)
+        assertEquals("v1", bundle.stats.affinityVersion)
 
         val html = bundle.generated.first { it.path == "report.html" }.bytes.toString(Charsets.UTF_8)
         assertTrue(html.startsWith("<!doctype html>"))
+        assertTrue(html.contains("Оценка v1"))
+        assertTrue(html.contains("Оценка — v1"))
         assertTrue(html.contains("&lt;Track&gt;"))
         assertTrue(html.contains("A &amp; B"))
         assertFalse(html.contains("http://"))
@@ -45,6 +49,8 @@ class ReportExporterTest {
         val csv = bundle.generated.first { it.path == "tracks.csv" }.bytes.toString(Charsets.UTF_8)
         assertTrue(csv.startsWith("\uFEFF"))
         assertTrue(csv.contains("\"<Track>, \"\"A\"\"\""))
+        assertTrue(csv.contains("affinity"))
+        assertTrue(csv.contains("affinity_reasons"))
 
         val prompt = bundle.generated.first { it.path == "ai-prompt.md" }
             .bytes.toString(Charsets.UTF_8)

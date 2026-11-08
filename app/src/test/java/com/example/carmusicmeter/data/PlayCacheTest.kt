@@ -33,6 +33,16 @@ class PlayCacheTest {
     }
 
     @Test
+    fun `кэш инвалидируется при смене версии builder'а`() {
+        val source = File(root, "events-2026-11-06.jsonl").apply { writeText("a") }
+        cache.store("2026-11-06", source, listOf(playRecord()))
+
+        val nextVersion = PlayCache(root, PlayBuilder.VERSION + 1)
+
+        assertNull(nextVersion.load("2026-11-06", source))
+    }
+
+    @Test
     fun `удалённый кэш возвращает null`() {
         val source = File(root, "events-2026-11-06.jsonl").apply { writeText("a") }
         cache.store("2026-11-06", source, listOf(playRecord()))

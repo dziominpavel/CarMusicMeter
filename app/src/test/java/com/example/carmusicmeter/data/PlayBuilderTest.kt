@@ -73,6 +73,47 @@ class PlayBuilderTest {
     }
 
     @Test
+    fun `агрегаты громкости восстанавливаются из volume_changed`() {
+        val result = build(
+            listOf(
+                eventLine(1_000, 100, "track_started", fields = startFields("k", "p1")),
+                eventLine(
+                    5_000,
+                    140,
+                    "volume_changed",
+                    fields = mapOf(
+                        "trackKey" to "k",
+                        "source" to "mcu",
+                        "previous" to 10,
+                        "value" to 2,
+                        "delta" to -8,
+                    ),
+                ),
+                eventLine(
+                    9_000,
+                    180,
+                    "volume_changed",
+                    fields = mapOf(
+                        "trackKey" to "k",
+                        "source" to "mcu",
+                        "previous" to 2,
+                        "value" to 7,
+                        "delta" to 5,
+                    ),
+                ),
+                eventLine(20_000, 200, "track_ended", fields = endFields("k", "p1", 1_000, 19_000, "skipped")),
+            ),
+        )
+
+        val mcu = result.plays.single().volumeStats.getValue("mcu")
+        assertEquals(5, mcu.up)
+        assertEquals(8, mcu.down)
+        assertEquals(7, mcu.level)
+        assertEquals(4_000L, mcu.dropMs)
+        assertEquals(8_000L, mcu.raiseMs)
+    }
+
+    @Test
     fun `незакрытый трек остаётся открытым`() {
         val result = build(
             listOf(

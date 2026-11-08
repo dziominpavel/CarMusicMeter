@@ -58,6 +58,10 @@ class PlayRecordTest {
         val row = PlayCsv.row(playRecord())
         assertEquals("10", row[PlayCsv.header.indexOf("mcuStart")])
         assertEquals("43", row[PlayCsv.header.indexOf("mcuMax")])
+        assertEquals("2", row[PlayCsv.header.indexOf("mcuUp")])
+        assertEquals("0", row[PlayCsv.header.indexOf("mcuDown")])
+        assertEquals("11", row[PlayCsv.header.indexOf("mcuLevel")])
+        assertEquals("500", row[PlayCsv.header.indexOf("mcuRaiseMs")])
         assertEquals("", row[PlayCsv.header.indexOf("audioStart")])
     }
 
