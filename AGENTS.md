@@ -1,8 +1,8 @@
 # CarMusicMeter — правила для AI-агента
 
 Единый IDE-нейтральный источник always-on правил. Дополнительные правила — в `.cursor/rules/*.mdc`.
-OpenSpec-скиллы: `.cursor/skills/`, `.devin/skills/`, `.opencode/skills/`, `.dsh/skills/`; команды: `.cursor/commands/opsx-*.md`, `.devin/workflows/opsx-*.md`, `.opencode/commands/opsx-*.md`.
-В DeepSeek Harness файловых слэш-команд нет: команда — это навык. `/opsx-*` там работают как навыки-алиасы, ведущие к `openspec-*` (см. `.dsh/README.md`).
+OpenSpec-скиллы лежат в `.agents/skills/` (OpenSpec 2.x — один набор на все инструменты); слэш-команд `/opsx-*` больше нет, скилл вызывается по имени: `/openspec-propose`, `/openspec-apply-change`, `/openspec-archive-change`.
+В DeepSeek Harness навыки приходят из профиля (плагин `dsh-skillpack`): вызываются как `/openspec-*`, локальных копий в проекте нет. `.dsh/skills/` остаётся только для навыков, специфичных для этого репозитория.
 
 ## Контекст проекта
 
@@ -104,7 +104,7 @@ MediaSession и медиа-уведомления, опрашивает гром
 1. Сверяйся со спеками: `openspec/specs/playback-capture/spec.md`,
    `openspec/specs/volume-tracking/spec.md`, `openspec/specs/event-log/spec.md`,
    `openspec/specs/play-facts/spec.md`.
-2. Новые фичи — через OpenSpec change (`/opsx-propose` → review → `/opsx-apply` → `/opsx-archive`).
+2. Новые фичи — через OpenSpec change (`/openspec-propose` → review → `/openspec-apply-change` → `/openspec-archive-change`).
 3. Не меняй `minSdk` без причины: 29 — это Android 10 магнитолы.
 4. Не добавляй разрешения «на всякий случай»: уведомления, foreground-служба,
    boot, батарея — и всё.
@@ -129,10 +129,10 @@ MediaSession и медиа-уведомления, опрашивает гром
 
 ### Workflow
 
-- `/opsx-propose <idea>` — создать change с артефактами (proposal.md, design.md, tasks.md, specs/).
-- `/opsx-apply` — реализовать задачи из текущего change по спеке.
-- `/opsx-archive` — заархивировать завершённый change и обновить основные specs.
-- `/opsx-explore` — исследовать кодовую базу перед предложением.
+- `/openspec-propose <idea>` — создать change с артефактами (proposal.md, design.md, tasks.md, specs/).
+- `/openspec-apply-change` — реализовать задачи из текущего change по спеке.
+- `/openspec-archive-change` — заархивировать завершённый change и обновить основные specs.
+- `/openspec-explore` — исследовать кодовую базу перед предложением.
 
 ### Когда использовать
 
