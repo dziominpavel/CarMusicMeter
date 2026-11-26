@@ -121,8 +121,42 @@ data class PlayRecord(
 
     fun toJsonLine(): String = toJson().toString()
 
+    /** Закрытие прослушивания, у которого не записалось окончание. */
+    fun asSessionLost(): PlayRecord = copy(
+        endedAt = maxOf(endedAt, startedAt),
+        endReason = "session_lost",
+        completed = false,
+        open = false,
+    )
+
+    /** Ранг записи при схлопывании дублей: live, закрытая, не-restored. */
+    fun duplicateRank(): Int = when {
+        origin == "live" -> 0
+        !open && !restored -> 1
+        !open -> 2
+        else -> 3
+    }
+
     companion object {
         const val SCHEMA_VERSION = 1
+
+        /** Окно одного прослушивания: больше — значит, часы прыгнули внутри факта. */
+        const val MAX_PLAY_SPAN_MS = 24L * 60 * 60 * 1000
+
+        /**
+         * Согласованы ли границы прослушивания.
+         *
+         * Часы магнитолы на холодном старте показывают 2023 год и через минуту
+         * исправляются: трек, начатый до исправления, получает `startedAt` из
+         * прошлого. Факт с растянутым или перевёрнутым интервалом датировать
+         * нельзя — он уходит в непроверенный поток.
+         */
+        fun timesPlausible(startedAt: Long, endedAt: Long): Boolean =
+            endedAt >= startedAt && endedAt - startedAt <= MAX_PLAY_SPAN_MS
+
+        /** Какая запись остаётся, если одно прослушивание попало в факты дважды. */
+        fun preferDuplicate(items: List<PlayRecord>): PlayRecord =
+            items.minWith(compareBy<PlayRecord> { it.duplicateRank() }.thenBy { it.endedAt })
 
         fun fromJson(raw: String?): PlayRecord? {
             if (raw.isNullOrBlank()) return null
@@ -208,7 +242,7 @@ data class PlayRecord(
                 completed = fields["completed"] as? Boolean
                     ?: (fields["endReason"] == "completed"),
                 restored = fields["restored"] as? Boolean ?: false,
-                clockVerified = clockVerified,
+                clockVerified = clockVerified && timesPlausible(startedAt, event.ts),
                 volumeStart = intOf(fields["volumeStart"]),
                 volumeEnd = intOf(fields["volumeEnd"]),
                 volumeLow = intOf(fields["volumeLow"]),

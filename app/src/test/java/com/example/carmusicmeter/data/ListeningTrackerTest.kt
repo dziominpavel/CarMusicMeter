@@ -241,6 +241,62 @@ class ListeningTrackerTest {
     }
 
     @Test
+    fun `скачок часов переносит старт активного трека`() {
+        val tracker = ListeningTracker()
+        val fakeWall = baseWall - 110_000_000_000L
+        tracker.onTick(TickTime(wallMs = fakeWall, monoMs = 0), snap("A", 0), 10, 30)
+        tracker.onTick(TickTime(wallMs = fakeWall + 5_000, monoMs = 5_000), snap("A", 5_000), 10, 30)
+
+        tracker.onClockChanged(monoBeforeMs = 5_000, driftMs = baseWall - fakeWall)
+
+        val ended = tracker.onTick(
+            TickTime(wallMs = baseWall + 6_000, monoMs = 6_000),
+            snap("B", 0),
+            10,
+            30,
+        ).events.single { it.type == "track_ended" }
+
+        assertEquals(baseWall, ended.fields["startedAt"])
+    }
+
+    @Test
+    fun `трек, начатый после исправления часов, не сдвигается`() {
+        val tracker = ListeningTracker()
+        tracker.onTick(t(10_000), snap("A", 0), 10, 30)
+
+        tracker.onClockChanged(monoBeforeMs = 5_000, driftMs = 110_000_000_000L)
+
+        val ended = tracker.onTick(t(11_000), snap("B", 0), 10, 30)
+            .events
+            .single { it.type == "track_ended" }
+
+        assertEquals(baseWall + 10_000, ended.fields["startedAt"])
+    }
+
+    @Test
+    fun `скачок часов не портит место подъёма громкости`() {
+        val tracker = ListeningTracker()
+        val fakeWall = baseWall - 110_000_000_000L
+        tracker.onTick(TickTime(wallMs = fakeWall, monoMs = 0), snap("A", 0), 10, 30)
+        tracker.onVolume(TickTime(wallMs = fakeWall + 1_000, monoMs = 1_000), 10, 30)
+        tracker.onVolume(TickTime(wallMs = fakeWall + 4_000, monoMs = 4_000), 12, 30)
+
+        tracker.onClockChanged(monoBeforeMs = 5_000, driftMs = baseWall - fakeWall)
+
+        val ended = tracker.onTick(
+            TickTime(wallMs = baseWall + 6_000, monoMs = 6_000),
+            snap("B", 0),
+            12,
+            30,
+        ).events.single { it.type == "track_ended" }
+        val stats = ended.fields["volumeStats"] as Map<*, *>
+        val audio = stats["audio"] as Map<*, *>
+
+        assertEquals(4_000L, audio["raiseMs"])
+        assertEquals(baseWall, ended.fields["startedAt"])
+    }
+
+    @Test
     fun `скачок настенных часов назад не ломает grace`() {
         val tracker = ListeningTracker()
         tracker.onTick(TickTime(wallMs = baseWall, monoMs = 0), snap("A", 0), 10, 30)

@@ -87,23 +87,27 @@ class PlaySource(
         val overlaps = beforeOverlap - historyKept.size
 
         val open = readOpen()
-        val merged = (live + historyKept + listOfNotNull(open))
-            .distinctBy { it.playId }
+        val loaded = (live + historyKept + listOfNotNull(open))
             .filter { play ->
                 play.open || (
                     (fromMs == null || play.startedAt >= fromMs) &&
                         (toMs == null || play.startedAt <= toMs)
                     )
             }
+        val byPlayId = dedupeBy(loaded) { it.playId }
+        val deduped = dedupeBy(byPlayId) { it.trackKey to it.startedAt }
+        val merged = keepSingleOpen(deduped)
+            .map(::withDateGuard)
             .sortedWith(compareBy<PlayRecord> { it.startedAt }.thenBy { it.playId })
 
         last = PlayFactsDiagnostics(
             live = live.size,
             history = historyKept.size,
-            open = if (open != null) 1 else 0,
+            open = merged.count { it.open },
             cacheDays = cache.listDays().size,
             builderVersion = PlayBuilder.VERSION,
             overlaps = overlaps,
+            duplicates = loaded.size - deduped.size,
             errors = errors,
         )
         return merged
@@ -183,4 +187,49 @@ class PlaySource(
 
     private fun overlaps(a: PlayRecord, b: PlayRecord): Boolean =
         a.startedAt <= b.endedAt && b.startedAt <= a.endedAt
+
+    /**
+     * Одно прослушивание — один факт.
+     *
+     * `playId` у live и history разный, а одно прослушивание может закрыться
+     * дважды: старый процесс из памяти и новый — из контрольной точки. Ключ
+     * прослушивания — трек и время старта. Ключ `playId` — первый рубеж: он же
+     * ловит пару «старт без конца в одном файле + окончание в следующем»,
+     * у которой время старта в двух фактах разное.
+     */
+    private fun dedupeBy(plays: List<PlayRecord>, key: (PlayRecord) -> Any): List<PlayRecord> =
+        plays.groupBy(key).values
+            .map { items -> if (items.size == 1) items.first() else PlayRecord.preferDuplicate(items) }
+
+    /**
+     * Открытым может быть только одно прослушивание — текущее.
+     *
+     * Запись из открытого файла (`origin=live`) авторитетна; если её нет,
+     * остаётся последний по времени старт. Остальные старты без окончания
+     * закрываются как `session_lost`: время и позиция сохраняются, но в отчёте
+     * они больше не «играют сейчас».
+     */
+    private fun keepSingleOpen(plays: List<PlayRecord>): List<PlayRecord> {
+        val opens = plays.filter { it.open }
+        if (opens.size <= 1) return plays
+        val keep = opens.firstOrNull { it.origin == "live" }
+            ?: opens.maxByOrNull { it.startedAt }
+            ?: return plays
+        return plays.map { play ->
+            if (play.open && play.playId != keep.playId) play.asSessionLost() else play
+        }
+    }
+
+    /**
+     * Страховка для фактов, записанных до исправления скачка часов.
+     *
+     * Файлы не переписываются: факт с перевёрнутыми или растянутыми границами
+     * просто перестаёт подтверждать дату и не расширяет период отчёта.
+     */
+    private fun withDateGuard(play: PlayRecord): PlayRecord =
+        if (play.clockVerified && !PlayRecord.timesPlausible(play.startedAt, play.endedAt)) {
+            play.copy(clockVerified = false)
+        } else {
+            play
+        }
 }

@@ -588,6 +588,7 @@ class MediaWatchService : Service() {
     }
 
     private fun logClockChange(time: TickTime) {
+        val previousMonoMs = lastClockMonoMs
         val jump = ClockJumpDetector.detect(
             previousWallMs = lastClockWallMs,
             previousMonoMs = lastClockMonoMs,
@@ -600,6 +601,12 @@ class MediaWatchService : Service() {
         // Часы исправились: со следующего тика журнал снова пишется по дате, а
         // поправка уходит в событие, чтобы отчёт пересчитал уже записанное.
         ClockStatus.onClockChanged(time.wallMs, jump.driftMs)
+        // Старт уже начатого трека записан по неверным часам: сдвигаем его на
+        // поправку, иначе факт уйдёт в файл 2023 года.
+        tracker.onClockChanged(
+            monoBeforeMs = previousMonoMs ?: time.monoMs,
+            driftMs = jump.driftMs,
+        )
         runCatching { app.prefs.lastVerifiedWallMs = time.wallMs }
         runCatching {
             val event = LogEvent(

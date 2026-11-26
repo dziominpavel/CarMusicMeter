@@ -33,6 +33,27 @@ class PlayRecordTest {
     }
 
     @Test
+    fun `факт с растянутым временем становится недостоверным`() {
+        val stretched = PlayRecord.fromTrackEnded(
+            event = endedEvent(startedAt = 1_000L, endedAt = 110_000_001_000L),
+            bootId = "b1",
+            deviceId = "dev",
+            appVersion = "1.0",
+            clockVerified = true,
+        )
+        val normal = PlayRecord.fromTrackEnded(
+            event = endedEvent(startedAt = 1_000L, endedAt = 2_000L),
+            bootId = "b1",
+            deviceId = "dev",
+            appVersion = "1.0",
+            clockVerified = true,
+        )
+
+        assertEquals(false, stretched?.clockVerified)
+        assertEquals(true, normal?.clockVerified)
+    }
+
+    @Test
     fun `факт переживает JSON-круговорот`() {
         val play = playRecord(playId = "abc", endReason = "completed", playedMs = 180_000L)
 

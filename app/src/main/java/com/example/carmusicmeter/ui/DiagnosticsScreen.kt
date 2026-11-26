@@ -122,6 +122,7 @@ fun DiagnosticsScreen(
             KeyValueRow("Версия builder'а", playFacts.builderVersion.toString())
             KeyValueRow("Открытых", playFacts.open.toString())
             KeyValueRow("Пересечений", playFacts.overlaps.toString())
+            KeyValueRow("Схлопнуто дублей", playFacts.duplicates.toString())
             KeyValueRow("Ошибок разбора", playFacts.errors.toString())
         }
 

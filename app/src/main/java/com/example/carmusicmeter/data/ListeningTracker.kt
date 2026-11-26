@@ -36,7 +36,9 @@ class ListeningTracker {
         var seekBack: Int,
         var seekForward: Int,
         var snapshot: MediaSnapshot,
-        val startedAtWallMs: Long,
+        var startedAtWallMs: Long,
+        /** `null` у восстановленного прослушивания: моно-время старта неизвестно. */
+        val startedMonoMs: Long?,
         var playedMs: Long,
         var running: Boolean,
         var lastTickMonoMs: Long,
@@ -442,6 +444,22 @@ class ListeningTracker {
         return true
     }
 
+    /**
+     * Часы исправились во время прослушивания.
+     *
+     * Поправка переносится на старт активного трека: иначе факт получает
+     * `startedAt` из неверного времени. Места подъёма и понижения громкости
+     * считаются по монотонному времени, поэтому скачок их не портит.
+     * Восстановленный трек не сдвигается: его старт записан прошлым процессом,
+     * а поправка относится к текущему boot.
+     */
+    fun onClockChanged(monoBeforeMs: Long, driftMs: Long) {
+        val current = active ?: return
+        val startedMono = current.startedMonoMs ?: return
+        if (startedMono > monoBeforeMs) return
+        current.startedAtWallMs += driftMs
+    }
+
     /** Состояние, восстановленное из сохранённого прослушивания. */
     private fun activeFrom(
         open: OpenPlay,
@@ -470,6 +488,7 @@ class ListeningTracker {
             seekForward = open.seekForward,
             snapshot = merged,
             startedAtWallMs = open.startedAtWallMs,
+            startedMonoMs = null,
             playedMs = open.playedMs,
             running = merged.phase == MediaPhase.PLAYING,
             lastTickMonoMs = time.monoMs,
@@ -547,6 +566,7 @@ class ListeningTracker {
             seekForward = 0,
             snapshot = snapshot,
             startedAtWallMs = time.wallMs,
+            startedMonoMs = time.monoMs,
             playedMs = 0L,
             running = snapshot.phase == MediaPhase.PLAYING,
             lastTickMonoMs = time.monoMs,

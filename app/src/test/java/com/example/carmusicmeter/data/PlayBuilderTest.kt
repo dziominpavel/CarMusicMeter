@@ -42,6 +42,22 @@ class PlayBuilderTest {
     }
 
     @Test
+    fun `реальный скачок 2023 года переносит старт трека`() {
+        val result = build(
+            listOf(
+                """{"ts":1683706467559,"type":"track_started","bootId":"1e658139","monoMs":46757,"clockVerified":false,"trackKey":"com.syu.music::right round::flo rida","playId":"5065e6a7-1d28-4c38-8996-afa5caab7c73","package":"com.syu.music","source":"fyt_service","title":"Right Round","artist":"Flo Rida","durationMs":204640}""",
+                """{"ts":1794499773440,"type":"clock_changed","bootId":"1e658139","monoMs":52365,"clockVerified":true,"wallDelta":110793300774,"monoDelta":505,"driftMs":110793300269,"shiftMs":110793300269}""",
+                """{"ts":1794499850553,"type":"track_ended","bootId":"1e658139","monoMs":129482,"clockVerified":true,"trackKey":"com.syu.music::right round::flo rida","playId":"5065e6a7-1d28-4c38-8996-afa5caab7c73","package":"com.syu.music","source":"fyt_service","title":"Right Round","artist":"Flo Rida","durationMs":204640,"playedMs":81698,"rawPlayedMs":81698,"endPositionMs":82343,"endReason":"skipped","completed":false,"startedAt":1683706467559}""",
+            ),
+        )
+
+        val play = result.plays.single { !it.open }
+        val expected = play.endedAt - play.playedMs
+        assertTrue(kotlin.math.abs(play.startedAt - expected) <= 2_000L)
+        assertTrue(play.startedAt > 1_790_000_000_000L)
+    }
+
+    @Test
     fun `скачок часов переносит старт и конец`() {
         val result = build(
             listOf(
@@ -111,6 +127,24 @@ class PlayBuilderTest {
         assertEquals(7, mcu.level)
         assertEquals(4_000L, mcu.dropMs)
         assertEquals(8_000L, mcu.raiseMs)
+    }
+
+    @Test
+    fun `сдвинутый старт live-факта склеивается со своим событием старта`() {
+        val rawStart = 1_683_706_467_559L
+        val corrected = rawStart + 110_793_300_269L
+        val result = build(
+            listOf(
+                """{"ts":$rawStart,"type":"track_started","bootId":"b1","monoMs":46757,"clockVerified":false,"trackKey":"k","playId":"p1","title":"Right Round","durationMs":204640}""",
+                """{"ts":${corrected + 71400},"type":"track_ended","bootId":"b1","monoMs":129482,"clockVerified":true,"trackKey":"k","playId":"p1","title":"Right Round","durationMs":204640,"playedMs":81698,"endReason":"skipped","startedAt":$corrected}""",
+                """{"ts":${corrected + 2000},"type":"clock_changed","bootId":"b1","monoMs":52365,"clockVerified":true,"driftMs":110793300269}""",
+            ),
+        )
+
+        val play = result.plays.single()
+        assertEquals(false, play.open)
+        assertEquals(corrected, play.startedAt)
+        assertEquals(true, play.clockVerified)
     }
 
     @Test

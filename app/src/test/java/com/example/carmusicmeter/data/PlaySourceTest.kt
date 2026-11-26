@@ -144,6 +144,134 @@ class PlaySourceTest {
         assertEquals(1, undated.size)
     }
 
+    @Test
+    fun `факт с растянутым временем становится недостоверным`() {
+        writeLive(
+            playRecord(
+                playId = "l1",
+                trackKey = "k1",
+                startedAt = 1_000,
+                endedAt = 110_000_001_000,
+            ),
+        )
+        writeLive(playRecord(playId = "l2", trackKey = "k2", startedAt = 3_000, endedAt = 4_000))
+
+        val source = PlaySource(root, "dev", "1.0", liveSince = null)
+        val (dated, undated) = source.splitDated(source.load())
+
+        assertEquals(1, dated.size)
+        assertEquals("l2", dated.single().playId)
+        assertEquals(1, undated.size)
+        assertEquals("l1", undated.single().playId)
+    }
+
+    @Test
+    fun `одно прослушивание из двух закрытий остаётся одним фактом`() {
+        writeLog(
+            "events-2026-11-05.jsonl",
+            eventLine(1_000, 100, "track_started", bootId = "b1", fields = startFields("k", "p1")),
+            eventLine(
+                2_000,
+                200,
+                "track_ended",
+                bootId = "b1",
+                fields = endFields("k", "p1", 1_000, 900, "session_lost"),
+            ),
+        )
+        writeLog(
+            "events-2026-11-06.jsonl",
+            eventLine(
+                3_000,
+                300,
+                "track_ended",
+                bootId = "b2",
+                fields = endFields("k", "p2", 1_000, 900, "session_lost"),
+            ),
+        )
+
+        val source = PlaySource(root, "dev", "1.0", liveSince = null)
+        val plays = source.load()
+
+        assertEquals(1, plays.size)
+        assertEquals(1, source.diagnostics().duplicates)
+    }
+
+    @Test
+    fun `открытым остаётся только последний старт`() {
+        writeLog(
+            "events-2026-11-05.jsonl",
+            eventLine(1_000, 100, "track_started", fields = startFields("a", "p1")),
+        )
+        writeLog(
+            "events-2026-11-06.jsonl",
+            eventLine(2_000, 200, "track_started", fields = startFields("b", "p2")),
+        )
+
+        val plays = PlaySource(root, "dev", "1.0", liveSince = null).load()
+
+        val opens = plays.filter { it.open }
+        assertEquals(1, opens.size)
+        assertEquals("b", opens.single().trackKey)
+        assertEquals("session_lost", plays.single { it.trackKey == "a" }.endReason)
+    }
+
+    @Test
+    fun `старт без окончания перед следующим треком закрывается`() {
+        writeLog(
+            "events-2026-11-06.jsonl",
+            eventLine(1_000, 100, "track_started", fields = startFields("a", "p1")),
+            eventLine(
+                31_000,
+                200,
+                "track_progress",
+                fields = mapOf(
+                    "trackKey" to "a",
+                    "playId" to "p1",
+                    "startedAt" to 1_000L,
+                    "playedMs" to 30_000L,
+                    "positionMs" to 30_000L,
+                ),
+            ),
+            eventLine(61_000, 300, "track_started", fields = startFields("b", "p2")),
+        )
+
+        val plays = PlaySource(root, "dev", "1.0", liveSince = null).load()
+
+        val stale = plays.single { it.trackKey == "a" }
+        val current = plays.single { it.trackKey == "b" }
+        assertEquals(false, stale.open)
+        assertEquals("session_lost", stale.endReason)
+        assertEquals(30_000L, stale.playedMs)
+        assertEquals(31_000L, stale.endedAt)
+        assertTrue(current.open)
+    }
+
+    @Test
+    fun `закрытие из следующего дня побеждает открытый старт`() {
+        writeLog(
+            "events-2026-11-05.jsonl",
+            eventLine(1_000, 100, "track_started", fields = startFields("k", "p1")),
+        )
+        writeLog(
+            "events-2026-11-06.jsonl",
+            eventLine(
+                3_000,
+                300,
+                "track_ended",
+                bootId = "b2",
+                fields = endFields("k", "p1", 1_000, 900, "skipped"),
+            ),
+        )
+
+        val source = PlaySource(root, "dev", "1.0", liveSince = null)
+        val plays = source.load()
+
+        assertEquals(1, plays.size)
+        assertEquals(false, plays.single().open)
+        assertEquals("skipped", plays.single().endReason)
+        assertEquals(1, source.diagnostics().duplicates)
+    }
+
     private fun writeLog(name: String, vararg lines: String) {
         val dir = File(root, "logs").apply { mkdirs() }
         File(dir, name).writeText(lines.joinToString("\n", postfix = "\n"))

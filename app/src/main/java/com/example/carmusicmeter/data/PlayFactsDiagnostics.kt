@@ -8,5 +8,6 @@ data class PlayFactsDiagnostics(
     val cacheDays: Int = 0,
     val builderVersion: Int = PlayBuilder.VERSION,
     val overlaps: Int = 0,
+    val duplicates: Int = 0,
     val errors: Int = 0,
 )

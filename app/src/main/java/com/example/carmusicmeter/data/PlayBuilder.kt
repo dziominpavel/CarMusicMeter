@@ -12,7 +12,7 @@ import org.json.JSONObject
  */
 object PlayBuilder {
 
-    const val VERSION = 2
+    const val VERSION = 3
 
     private const val CONFIRMATION_HORIZON_MS = 365L * 24 * 60 * 60 * 1000
 
@@ -47,19 +47,31 @@ object PlayBuilder {
         if (rows.isEmpty()) return Result(emptyList(), malformed)
 
         val jumps = clockJumps(rows)
-        val starts = rows
-            .filter { it.type == "track_started" }
-            .associateBy { startKey(it) }
+        val startRows = rows.filter { it.type == "track_started" }
+        val starts = startRows.associateBy { startKey(it) }
+        val startsByPlayId = startRows
+            .mapNotNull { row ->
+                row.json.optStringOrNull("playId")
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { it to row }
+            }
+            .toMap()
         val seeks = rows.filter { it.type == "seek" }
         val progress = rows.filter { it.type == "track_progress" }
 
         val plays = ArrayList<Pair<Pair<String, Long>, PlayRecord>>()
+        val matchedStarts = HashSet<Triple<String?, String, Long>>()
         rows.filter { it.type == "track_ended" }.forEach { row ->
             val trackKey = row.json.optString("trackKey", "")
+            val playId = row.json.optStringOrNull("playId")?.takeIf { it.isNotBlank() }
             val startedRaw = row.json.optLong("startedAt", row.ts)
             val startRow = starts[startKey(row.bootId, trackKey, startedRaw)]
+                ?: playId?.let { startsByPlayId[it] }
+            startRow?.let { matchedStarts += startKey(it) }
+            // `startedAt` в live-факте уже сдвинут поправкой часов, поэтому время
+            // берём из события старта: поправка применится ровно один раз.
             val startedAt = correctedTs(
-                ts = startedRaw,
+                ts = startRow?.ts ?: startedRaw,
                 mono = startRow?.mono ?: row.mono,
                 bootId = row.bootId,
                 jumps = jumps,
@@ -96,22 +108,19 @@ object PlayBuilder {
                 appVersion = appVersion,
                 open = false,
             )
-            plays += (trackKey to startedRaw) to applyVolume(play, rows, row, trackKey, startedAt, endedAt, jumps)
+            plays += (trackKey to startedAt) to applyVolume(play, rows, row, trackKey, startedAt, endedAt, jumps)
         }
 
         // Одно прослушивание — один факт. При двойном закрытии (старая сборка
-        // закрыла из памяти, новая — из checkpoint) оставляем не-restored запись.
-        val deduped = plays.groupBy({ it.first }, { it.second }).mapValues { (_, items) ->
-            items.filterNot { it.restored }.minByOrNull { it.endedAt }
-                ?: items.minByOrNull { it.endedAt }!!
-        }.values
+        // закрыла из памяти, новая — из checkpoint) остаётся не-restored запись.
+        val deduped = plays.groupBy({ it.first }, { it.second })
+            .mapValues { (_, items) -> PlayRecord.preferDuplicate(items) }
+            .values
 
-        val closedStarts = plays.map { it.first }.toSet()
         val openPlays = ArrayList<PlayRecord>()
-        rows.filter { it.type == "track_started" }.forEach { start ->
+        startRows.forEach { start ->
+            if (startKey(start) in matchedStarts) return@forEach
             val trackKey = start.json.optString("trackKey", "")
-            val key = trackKey to start.ts
-            if (key in closedStarts) return@forEach
             val lastProgress = progress
                 .filter {
                     it.bootId == start.bootId &&
@@ -280,8 +289,11 @@ object PlayBuilder {
             .mapNotNull { row ->
                 val bootId = row.bootId ?: return@mapNotNull null
                 val mono = row.mono ?: return@mapNotNull null
-                val delta = row.json.optLongOrNull("wallDelta")
+                val delta = row.json.optLongOrNull("driftMs")
                     ?: row.json.optLongOrNull("shiftMs")
+                    ?: row.json.optLongOrNull("wallDelta")?.minus(
+                        row.json.optLongOrNull("monoDelta") ?: 0L,
+                    )
                     ?: return@mapNotNull null
                 bootId to Jump(mono, delta)
             }

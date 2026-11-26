@@ -78,7 +78,7 @@ object PlayDictionary {
         Field("endReason", "enum", "-", false, "completed, skipped, interrupted, stopped, session_lost, service_stopped, not_played, unknown, open"),
         Field("completed", "bool", "-", false, "Дослушан ли трек"),
         Field("restored", "bool", "-", false, "Закрытие прослушивания из прошлого процесса"),
-        Field("clockVerified", "bool", "-", false, "Можно ли верить дате"),
+        Field("clockVerified", "bool", "-", false, "Можно ли верить дате; false — часы или границы прослушивания не сходятся"),
         Field("volumeStart", "int", "шкала", true, "Громкость в начале"),
         Field("volumeEnd", "int", "шкала", true, "Громкость в конце"),
         Field("volumeLow", "int", "шкала", true, "Минимум громкости"),
@@ -127,8 +127,10 @@ object PlayDictionary {
         ## Время
 
         Все времена — epoch milliseconds. `clockVerified=false` означает, что
-        дате нельзя верить; такие факты показываются отдельно и не расширяют
-        период отчёта. Поправка часов уже применена к `startedAt`/`endedAt`.
+        дате нельзя верить: часы не подтверждены или границы прослушивания не
+        сходятся (старт позже конца либо раньше его больше чем на сутки). Такие
+        факты показываются отдельно и не расширяют период отчёта. Поправка
+        часов уже применена к `startedAt`/`endedAt`.
 
         ## Пустые значения
 

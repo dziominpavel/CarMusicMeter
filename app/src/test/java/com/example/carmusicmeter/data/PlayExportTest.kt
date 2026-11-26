@@ -47,5 +47,6 @@ class PlayExportTest {
             .bytes.toString(Charsets.UTF_8)
         assertTrue(schema.contains("playsSchemaVersion"))
         assertTrue(schema.contains("clockVerified"))
+        assertTrue(schema.contains("границы прослушивания не"))
     }
 }
