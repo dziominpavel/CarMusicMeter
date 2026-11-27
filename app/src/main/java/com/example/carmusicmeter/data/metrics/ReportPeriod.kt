@@ -20,8 +20,17 @@ enum class ReportPeriod(
     }
 
     companion object {
+        /** Период по умолчанию, пока пользователь не выбрал другой. */
+        val DEFAULT: ReportPeriod = ALL
+
+        /**
+         * Неизвестный или отсутствующий тег — [DEFAULT].
+         *
+         * Короткое окно на магнитоле выглядит пустым, если несколько дней не
+         * было поездок, и это читается как «данные пропали».
+         */
         fun fromTag(tag: String?): ReportPeriod =
-            entries.firstOrNull { it.tag == tag } ?: DAYS_7
+            entries.firstOrNull { it.tag == tag } ?: DEFAULT
     }
 }
 

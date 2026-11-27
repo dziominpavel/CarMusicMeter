@@ -1,11 +1,9 @@
 package com.example.carmusicmeter.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -18,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.carmusicmeter.data.metrics.ReportModel
+import com.example.carmusicmeter.data.metrics.ReportPeriod
 
 @Composable
 fun AllTracksScreen(
@@ -26,9 +25,7 @@ fun AllTracksScreen(
     onTrackClick: (String) -> Unit,
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+        modifier = Modifier.screenFrame(),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(
@@ -46,7 +43,11 @@ fun AllTracksScreen(
             )
             if (model.rankedTracks.isEmpty()) {
                 Text(
-                    text = "За этот период нет треков.",
+                    text = if (model.period == ReportPeriod.ALL) {
+                        "За всё время треков нет: прослушивания ещё не записаны."
+                    } else {
+                        periodSwitchHint(model.period) ?: "За этот период нет треков."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

@@ -1,6 +1,5 @@
 package com.example.carmusicmeter.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -8,7 +7,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -42,9 +40,7 @@ fun ReportScreen(
     onExport: () -> Unit,
 ) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+        modifier = Modifier.screenFrame(),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(
@@ -59,7 +55,7 @@ fun ReportScreen(
             ReportPeriodChips(period = period, onPeriodChange = onPeriodChange)
             when (state) {
                 is ReportUiState.Loading -> LoadingCard(state)
-                ReportUiState.Empty -> EmptyCard()
+                ReportUiState.Empty -> EmptyCard(period)
                 is ReportUiState.Error -> ErrorCard(state.message, onRetry)
                 is ReportUiState.Ready -> ReportContent(
                     model = state.model,
@@ -90,11 +86,18 @@ private fun LoadingCard(state: ReportUiState.Loading) {
 }
 
 @Composable
-private fun EmptyCard() {
+private fun EmptyCard(period: ReportPeriod) {
     SectionCard("Отчёт") {
-        Text("За этот период нет прослушиваний.", style = MaterialTheme.typography.bodyLarge)
         Text(
-            "Выберите другой период или прокатитесь.",
+            text = if (period == ReportPeriod.ALL) {
+                "За всё время прослушиваний нет."
+            } else {
+                "За «" + period.label + "» прослушиваний нет."
+            },
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            text = periodSwitchHint(period) ?: "Прокатитесь — запись начнётся сама.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -126,6 +129,17 @@ private fun ReportContent(
     onAllTracks: () -> Unit,
     onExport: () -> Unit,
 ) {
+    // Короткое окно периода даёт почти пустой отчёт, если давно не ездил:
+    // без подсказки это выглядит как «все данные пропали».
+    if (model.summary.plays < PERIOD_HINT_PLAYS) {
+        periodSwitchHint(model.period)?.let { hint ->
+            Text(
+                text = hint,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
     ReportSummaryCard(model)
     Text(
         text = "Оценка трека — v1: громкость важнее времени; внизу «Все треки» — потенциально «не нравится»." +

@@ -36,7 +36,7 @@ class Prefs(context: Context) {
             prefs.edit { putString(KEY_EXPORT_RANGE, value.tag) }
         }
 
-    /** Период экрана отчёта; по умолчанию 7 дней. */
+    /** Период экрана отчёта; по умолчанию вся история. */
     var reportPeriod: ReportPeriod
         get() = ReportPeriod.fromTag(prefs.getString(KEY_REPORT_PERIOD, null))
         set(value) {

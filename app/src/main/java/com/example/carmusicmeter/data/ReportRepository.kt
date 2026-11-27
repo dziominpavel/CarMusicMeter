@@ -38,7 +38,7 @@ class ReportRepository(
     val state: StateFlow<ReportUiState> = _state.asStateFlow()
 
     private var job: Job? = null
-    private var lastPeriod: ReportPeriod = ReportPeriod.DAYS_7
+    private var lastPeriod: ReportPeriod = ReportPeriod.DEFAULT
 
     fun load(period: ReportPeriod, nowMs: Long = System.currentTimeMillis()) {
         job?.cancel()

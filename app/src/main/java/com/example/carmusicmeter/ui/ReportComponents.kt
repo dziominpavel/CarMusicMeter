@@ -39,6 +39,27 @@ fun ReportPeriodChips(
     }
 }
 
+/** Порог «за выбранный период почти ничего не сыграло». */
+internal const val PERIOD_HINT_PLAYS = 5
+
+/**
+ * Подсказка о слишком узком окне периода: `null` для «Всё».
+ *
+ * Предлагает только периоды шире выбранного, иначе текст советует переключиться
+ * на тот, что уже включён. Названия берутся из [ReportPeriod] — тот же источник,
+ * что у чипов.
+ */
+internal fun periodSwitchHint(current: ReportPeriod): String? {
+    if (current == ReportPeriod.ALL) return null
+    val nearest = ReportPeriod.entries
+        .filter { it.days != null && current.days != null && it.days > current.days }
+        .minByOrNull { it.days ?: Int.MAX_VALUE }
+    val targets = listOfNotNull(nearest, ReportPeriod.ALL)
+    return "За «" + current.label + "» почти нет прослушиваний: остальная история " +
+        "осталась за окном периода. Переключите на «" +
+        targets.joinToString("» или «") { it.label } + "»."
+}
+
 @Composable
 private fun PeriodChip(
     value: ReportPeriod,

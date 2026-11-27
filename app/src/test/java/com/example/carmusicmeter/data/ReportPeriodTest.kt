@@ -9,13 +9,13 @@ import org.junit.Test
 class ReportPeriodTest {
 
     @Test
-    fun `теги периодов читаются и по умолчанию семь дней`() {
+    fun `теги периодов читаются и по умолчанию вся история`() {
         assertEquals(ReportPeriod.DAYS_7, ReportPeriod.fromTag("7d"))
         assertEquals(ReportPeriod.DAYS_30, ReportPeriod.fromTag("30d"))
         assertEquals(ReportPeriod.DAYS_90, ReportPeriod.fromTag("90d"))
         assertEquals(ReportPeriod.ALL, ReportPeriod.fromTag("all"))
-        assertEquals(ReportPeriod.DAYS_7, ReportPeriod.fromTag(null))
-        assertEquals(ReportPeriod.DAYS_7, ReportPeriod.fromTag("unknown"))
+        assertEquals(ReportPeriod.ALL, ReportPeriod.fromTag(null))
+        assertEquals(ReportPeriod.ALL, ReportPeriod.fromTag("unknown"))
     }
 
     @Test
